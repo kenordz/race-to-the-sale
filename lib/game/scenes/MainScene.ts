@@ -1,24 +1,32 @@
 import Phaser from "phaser";
 
-export const GAME_WIDTH = 800;
-export const GAME_HEIGHT = 600;
+// Scene-v2: LimeZu Museum_room_2 — a tall 512x1056 vertical map with three
+// stacked levels (artifacts up top, statue hall in the middle, garden + pond
+// at the bottom). World is the image; there is no void around it.
+const WORLD_WIDTH = 512;
+const WORLD_HEIGHT = 1056;
+const ZOOM = 2;
+// Canvas viewport is a square window into the much taller world; the camera
+// follows the player, so vertical scroll dominates as you move between levels.
+export const GAME_WIDTH = 640;
+export const GAME_HEIGHT = 640;
 
-const TILE = 32;
-const WALL_THICKNESS = TILE;
-const PLAYER_SPEED = 160;
+const PLAYER_SPEED = 130;
 
 // LimeZu Premade_Character_32x32 sheet: 1792x1312, frames are 32 wide x 64 tall
 // (a "tile" worth of legs, plus a tile worth of head/hair on top). The bottom
 // 32px of the PNG is empty padding, leaving a clean 56 cols x 20 rows grid.
 // Row 0 holds 3 preview thumbnails; animation rows start at row 1.
-// Each animation row is laid out as: cells 0-5 down, 6-11 right, 12-17 up,
-// 18-23 left (6 frames per direction, 4 directions).
+// Each animation row is laid out as: cells 0-5 right, 6-11 up, 12-17 left,
+// 18-23 down (6 frames per direction, 4 directions). The mapping looks
+// rotated vs typical RPG sheets — verified empirically by pressing each
+// arrow key and matching the rendered direction.
 const CHAR_COLS = 56;
 const FRAME_W = 32;
 const FRAME_H = 64;
 const IDLE_ROW = 1;
 const WALK_ROW = 2;
-const DIR_OFFSET = { down: 0, right: 6, up: 12, left: 18 } as const;
+const DIR_OFFSET = { right: 0, up: 6, left: 12, down: 18 } as const;
 const FRAMES_PER_DIR = 6;
 const frame = (col: number, row: number) => row * CHAR_COLS + col;
 
@@ -28,7 +36,6 @@ const DIRECTIONS: Direction[] = ["down", "right", "up", "left"];
 export class MainScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private walls!: Phaser.Physics.Arcade.StaticGroup;
   private facing: Direction = "down";
 
   constructor() {
@@ -40,42 +47,18 @@ export class MainScene extends Phaser.Scene {
       frameWidth: FRAME_W,
       frameHeight: FRAME_H,
     });
+    this.load.image("scene-bg", "/game/backgrounds/scene-v2.png");
   }
 
   create() {
-    // World bounds = the full office room.
-    this.physics.world.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // ─── Floor ───────────────────────────────────────────────────────────
-    this.add
-      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0xc4a17a)
-      .setOrigin(0, 0);
+    // ─── Background ─────────────────────────────────────────────────────
+    this.add.image(0, 0, "scene-bg").setOrigin(0, 0);
 
-    // ─── Walls (perimeter, with collision) ───────────────────────────────
-    this.walls = this.physics.add.staticGroup();
-    const wallColor = 0x4a3520;
-    const wallSpecs = [
-      [0, 0, GAME_WIDTH, WALL_THICKNESS],
-      [0, GAME_HEIGHT - WALL_THICKNESS, GAME_WIDTH, WALL_THICKNESS],
-      [0, 0, WALL_THICKNESS, GAME_HEIGHT],
-      [GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT],
-    ] as const;
-    for (const [x, y, w, h] of wallSpecs) {
-      const rect = this.add.rectangle(x, y, w, h, wallColor).setOrigin(0, 0);
-      this.physics.add.existing(rect, true);
-      this.walls.add(rect);
-    }
-
-    // Inner trim line for pixel-art depth.
-    this.add
-      .rectangle(
-        WALL_THICKNESS,
-        WALL_THICKNESS,
-        GAME_WIDTH - 2 * WALL_THICKNESS,
-        2,
-        0x2a1f12
-      )
-      .setOrigin(0, 0);
+    // No furniture colliders for this iteration — the only physics constraint
+    // is the world boundary (setCollideWorldBounds on the player). The user
+    // explicitly prefers "walk over a couch" to "invisible barrier surprises".
 
     // ─── Animations ──────────────────────────────────────────────────────
     for (const dir of DIRECTIONS) {
@@ -108,31 +91,30 @@ export class MainScene extends Phaser.Scene {
     }
 
     // ─── Player ──────────────────────────────────────────────────────────
-    // Sprite is 32w x 64h. Anchor at the feet (origin 0.5, 1) so positioning
-    // matches the tile grid: the sprite's "ground" lines up with the
-    // collision body, and the head extends upward into the cell above.
+    // Anchor at the feet (origin 0.5, 1) so the sprite's "ground" lines up
+    // with the collision body and the head extends upward into the cell
+    // above. Body covers only the feet/legs so the head can pass in front
+    // of walls and decor without colliding.
+    // Start the player at the bottom-center of the map (garden/pond level).
+    // The camera will follow upward as they walk through the statue hall and
+    // into the artifact room at the top.
     this.player = this.physics.add.sprite(
-      GAME_WIDTH / 2,
-      GAME_HEIGHT / 2,
+      WORLD_WIDTH / 2,
+      WORLD_HEIGHT - 80,
       "character",
       frame(DIR_OFFSET.down, IDLE_ROW)
     );
     this.player.setOrigin(0.5, 1);
     this.player.setCollideWorldBounds(true);
-    // Body covers the feet/legs area only so the character's head can pass
-    // in front of walls and decor without colliding. With origin (0.5, 1)
-    // the body sits at the bottom of the sprite rect.
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     body.setSize(20, 20);
     body.setOffset(6, FRAME_H - 22);
 
-    this.physics.add.collider(this.player, this.walls);
-
-    // ─── Camera: chunky Habbo-style zoom + follow player ─────────────────
+    // ─── Camera: follow player around the expanded world ────────────────
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
-    cam.setZoom(2);
-    cam.startFollow(this.player, true, 0.15, 0.15);
+    cam.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    cam.setZoom(ZOOM);
+    cam.startFollow(this.player, true, 0.1, 0.1);
     cam.setRoundPixels(true);
 
     this.cursors = this.input.keyboard!.createCursorKeys();

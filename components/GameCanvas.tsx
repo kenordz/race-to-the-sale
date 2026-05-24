@@ -42,6 +42,10 @@ export default function GameCanvas() {
         },
         banner: false,
       });
+      if (process.env.NODE_ENV !== "production") {
+        (window as unknown as { __phaserGame?: Phaser.Game }).__phaserGame =
+          gameRef.current;
+      }
     })();
 
     return () => {
