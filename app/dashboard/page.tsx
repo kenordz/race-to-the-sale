@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./actions";
@@ -26,7 +27,7 @@ export default async function DashboardPage() {
           Race to the Sale
         </p>
         <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">
-          Hello, {greetingName}
+          Welcome, {greetingName}
         </h1>
         <p className="mt-3 text-white/50">
           Role: <span className="text-white/80">{profile?.role ?? "—"}</span>
@@ -37,10 +38,16 @@ export default async function DashboardPage() {
           </span>
         </p>
         <p className="mt-6 max-w-md text-sm text-white/40">
-          The race track is coming next session. For now this confirms auth +
-          DB are wired up end-to-end.
+          Click below to enter the office.
         </p>
       </div>
+
+      <Link
+        href="/play"
+        className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-white/90"
+      >
+        Enter the Office →
+      </Link>
 
       <form action={signOut}>
         <button className="rounded-md border border-white/20 bg-white/5 px-4 py-2 text-sm transition hover:bg-white/10">

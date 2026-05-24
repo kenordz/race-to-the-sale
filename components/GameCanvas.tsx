@@ -28,7 +28,13 @@ export default function GameCanvas() {
         parent: containerRef.current,
         width: GAME_WIDTH,
         height: GAME_HEIGHT,
-        backgroundColor: "#f3f4f6",
+        backgroundColor: "#1a1a1a",
+        physics: {
+          default: "arcade",
+          arcade: { gravity: { x: 0, y: 0 }, debug: false },
+        },
+        pixelArt: true,
+        roundPixels: true,
         scene: [MainScene],
         scale: {
           mode: PhaserLib.Scale.NONE,
