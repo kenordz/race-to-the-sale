@@ -6,10 +6,20 @@ import Phaser from "phaser";
 const WORLD_WIDTH = 512;
 const WORLD_HEIGHT = 1056;
 const ZOOM = 2;
-// Canvas viewport is a square window into the much taller world; the camera
-// follows the player, so vertical scroll dominates as you move between levels.
-export const GAME_WIDTH = 640;
-export const GAME_HEIGHT = 640;
+// 16:9 widescreen canvas. Camera viewport is wider than the world, so the
+// world renders centered with dark void on both sides — gives a "vertical
+// slice in a larger universe" feel.
+export const GAME_WIDTH = 1280;
+export const GAME_HEIGHT = 720;
+
+// Minimap (top-right HUD): a fixed view of the full world at a fraction of
+// the main camera's zoom. Scaled so the world's height fits the minimap.
+const MINIMAP_PADDING = 16;
+const MINIMAP_W = 180;
+const MINIMAP_H = 260;
+const MINIMAP_X = GAME_WIDTH - MINIMAP_W - MINIMAP_PADDING;
+const MINIMAP_Y = MINIMAP_PADDING;
+const MINIMAP_ZOOM = MINIMAP_H / WORLD_HEIGHT;
 
 const PLAYER_SPEED = 130;
 
@@ -37,6 +47,7 @@ export class MainScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private facing: Direction = "down";
+  private minimap!: Phaser.Cameras.Scene2D.Camera;
 
   constructor() {
     super({ key: "MainScene" });
@@ -110,12 +121,36 @@ export class MainScene extends Phaser.Scene {
     body.setSize(20, 20);
     body.setOffset(6, FRAME_H - 22);
 
-    // ─── Camera: follow player around the expanded world ────────────────
+    // ─── Main camera: follow player around the world ─────────────────────
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     cam.setZoom(ZOOM);
     cam.startFollow(this.player, true, 0.1, 0.1);
     cam.setRoundPixels(true);
+
+    // ─── Minimap: fixed view of the entire world, top-right ─────────────
+    this.minimap = this.cameras.add(MINIMAP_X, MINIMAP_Y, MINIMAP_W, MINIMAP_H);
+    this.minimap.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.minimap.setZoom(MINIMAP_ZOOM);
+    this.minimap.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+    this.minimap.setBackgroundColor(0x0a0a0a);
+    this.minimap.setRoundPixels(true);
+
+    // Minimap border, rendered only by the main camera. Because the main
+    // camera applies ZOOM to everything (including scrollFactor-0 objects),
+    // the border's position and size are pre-divided by ZOOM so it lands at
+    // the intended canvas pixel coordinates.
+    const borderCx = (MINIMAP_X + MINIMAP_W / 2) / ZOOM;
+    const borderCy = (MINIMAP_Y + MINIMAP_H / 2) / ZOOM;
+    const border = this.add.rectangle(
+      borderCx,
+      borderCy,
+      MINIMAP_W / ZOOM,
+      MINIMAP_H / ZOOM
+    );
+    border.setStrokeStyle(2 / ZOOM, 0xffffff, 0.85);
+    border.setScrollFactor(0);
+    this.minimap.ignore(border);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.player.anims.play(`idle-${this.facing}`);

@@ -37,7 +37,7 @@ export default function GameCanvas() {
         roundPixels: true,
         scene: [MainScene],
         scale: {
-          mode: PhaserLib.Scale.NONE,
+          mode: PhaserLib.Scale.FIT,
           autoCenter: PhaserLib.Scale.CENTER_BOTH,
         },
         banner: false,
@@ -58,8 +58,7 @@ export default function GameCanvas() {
   return (
     <div
       ref={containerRef}
-      className="overflow-hidden rounded-xl border border-white/10 shadow-2xl"
-      style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}
+      className="aspect-video w-full max-w-[1280px] overflow-hidden rounded-xl border border-white/10 shadow-2xl"
     />
   );
 }
