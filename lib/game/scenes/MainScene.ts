@@ -1,4 +1,19 @@
 import Phaser from "phaser";
+import {
+  STATIONS,
+  STATION_COLORS,
+  PROXIMITY_RADIUS,
+  INTERACTION_COOLDOWN_MS,
+  type Station,
+} from "@/lib/game/stations";
+
+type StationView = {
+  data: Station;
+  container: Phaser.GameObjects.Container;
+  circle: Phaser.GameObjects.Arc;
+  pulseTween: Phaser.Tweens.Tween;
+  active: boolean;
+};
 
 // Scene-v2: LimeZu Museum_room_2 — a tall 512x1056 vertical map with three
 // stacked levels (artifacts up top, statue hall in the middle, garden + pond
@@ -48,6 +63,11 @@ export class MainScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private facing: Direction = "down";
   private minimap!: Phaser.Cameras.Scene2D.Camera;
+  private stations: StationView[] = [];
+  private activeStation: StationView | null = null;
+  private prompt!: Phaser.GameObjects.Container;
+  private spaceKey!: Phaser.Input.Keyboard.Key;
+  private lastInteractAt = new Map<string, number>();
 
   constructor() {
     super({ key: "MainScene" });
@@ -70,6 +90,12 @@ export class MainScene extends Phaser.Scene {
     // No furniture colliders for this iteration — the only physics constraint
     // is the world boundary (setCollideWorldBounds on the player). The user
     // explicitly prefers "walk over a couch" to "invisible barrier surprises".
+
+    // ─── Stations ───────────────────────────────────────────────────────
+    // Each station is a small pulsing badge anchored at its world position.
+    // Built before the player sprite so the player renders on top when
+    // walking over them.
+    this.createStations();
 
     // ─── Animations ──────────────────────────────────────────────────────
     for (const dir of DIRECTIONS) {
@@ -153,7 +179,144 @@ export class MainScene extends Phaser.Scene {
     this.minimap.ignore(border);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
+    this.spaceKey = this.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.SPACE
+    );
+    this.spaceKey.on("down", this.tryInteract, this);
     this.player.anims.play(`idle-${this.facing}`);
+
+    // UI HUD lives in its own scene so it can render in canvas pixel space
+    // without fighting the main camera's zoom or scroll.
+    this.scene.launch("UIScene");
+  }
+
+  private tryInteract() {
+    if (!this.activeStation) return;
+    const id = this.activeStation.data.id;
+    const now = this.time.now;
+    const last = this.lastInteractAt.get(id) ?? -Infinity;
+    if (now - last < INTERACTION_COOLDOWN_MS) return;
+    this.lastInteractAt.set(id, now);
+
+    // Visual flash: scale bump + briefly recolor the disc white, then back.
+    const station = this.activeStation;
+    const originalFill = STATION_COLORS[station.data.type];
+    station.circle.setFillStyle(0xffffff, 1);
+    this.tweens.add({
+      targets: station.circle,
+      scale: 1.6,
+      duration: 120,
+      ease: "Quad.easeOut",
+      yoyo: true,
+      onComplete: () => {
+        station.circle.setFillStyle(originalFill, 0.95);
+      },
+    });
+
+    this.game.events.emit("station:interact", {
+      station: station.data,
+      xp: station.data.xpReward,
+    });
+  }
+
+  private createStations() {
+    for (const data of STATIONS) {
+      const container = this.add.container(data.x, data.y);
+
+      // Soft ground shadow so the badge feels anchored to the floor.
+      const shadow = this.add.ellipse(0, 22, 36, 10, 0x000000, 0.35);
+
+      // Colored disc that pulses to draw the eye.
+      const circle = this.add.circle(0, 0, 22, STATION_COLORS[data.type], 0.95);
+      circle.setStrokeStyle(2, 0xffffff, 0.9);
+
+      // Emoji icon centered on the disc.
+      const icon = this.add
+        .text(0, 1, data.icon, { fontSize: "20px" })
+        .setOrigin(0.5, 0.5);
+
+      // Label tucked under the badge.
+      const label = this.add
+        .text(0, 30, data.label, {
+          fontSize: "9px",
+          fontFamily: "monospace",
+          color: "#ffffff",
+          backgroundColor: "#000000aa",
+          padding: { x: 4, y: 2 },
+        })
+        .setOrigin(0.5, 0);
+
+      container.add([shadow, circle, icon, label]);
+
+      const pulseTween = this.tweens.add({
+        targets: circle,
+        scale: 1.12,
+        duration: 750,
+        ease: "Sine.easeInOut",
+        yoyo: true,
+        repeat: -1,
+      });
+
+      this.stations.push({ data, container, circle, pulseTween, active: false });
+    }
+
+    // "Press SPACE" prompt floats above the currently-active station. Lives
+    // in world space (so it tracks the station when the camera scrolls) but
+    // starts hidden — proximity checks toggle it on/off.
+    const promptBg = this.add.rectangle(0, 0, 100, 18, 0x000000, 0.85);
+    promptBg.setStrokeStyle(1, 0xffffff, 0.6);
+    const promptText = this.add
+      .text(0, 0, "PRESS SPACE", {
+        fontSize: "10px",
+        fontFamily: "monospace",
+        color: "#ffffff",
+      })
+      .setOrigin(0.5, 0.5);
+    this.prompt = this.add.container(0, 0, [promptBg, promptText]);
+    this.prompt.setVisible(false);
+  }
+
+  private updateProximity() {
+    let nearest: StationView | null = null;
+    let nearestDist = PROXIMITY_RADIUS;
+
+    for (const view of this.stations) {
+      const dist = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y - 16, // aim at the player's torso, not feet
+        view.data.x,
+        view.data.y
+      );
+      if (dist < nearestDist) {
+        nearest = view;
+        nearestDist = dist;
+      }
+    }
+
+    if (nearest !== this.activeStation) {
+      // Reset old active station's pulse to gentle scale.
+      if (this.activeStation) {
+        this.activeStation.active = false;
+        this.activeStation.pulseTween.updateTo("scale", 1.12, true);
+        this.activeStation.circle.setScale(1);
+      }
+      // Boost the new active station's pulse.
+      if (nearest) {
+        nearest.active = true;
+        nearest.pulseTween.updateTo("scale", 1.3, true);
+      }
+      this.activeStation = nearest;
+    }
+
+    if (this.activeStation) {
+      this.prompt.setVisible(true);
+      this.prompt.setPosition(
+        this.activeStation.data.x,
+        this.activeStation.data.y - 44
+      );
+    } else {
+      this.prompt.setVisible(false);
+    }
   }
 
   update() {
@@ -180,5 +343,7 @@ export class MainScene extends Phaser.Scene {
     } else {
       this.player.anims.play(`idle-${this.facing}`, true);
     }
+
+    this.updateProximity();
   }
 }

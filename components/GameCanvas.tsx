@@ -16,10 +16,12 @@ export default function GameCanvas() {
     let cancelled = false;
 
     (async () => {
-      const [{ default: PhaserLib }, { MainScene }] = await Promise.all([
-        import("phaser"),
-        import("@/lib/game/scenes/MainScene"),
-      ]);
+      const [{ default: PhaserLib }, { MainScene }, { UIScene }] =
+        await Promise.all([
+          import("phaser"),
+          import("@/lib/game/scenes/MainScene"),
+          import("@/lib/game/scenes/UIScene"),
+        ]);
 
       if (cancelled || !containerRef.current) return;
 
@@ -35,7 +37,7 @@ export default function GameCanvas() {
         },
         pixelArt: true,
         roundPixels: true,
-        scene: [MainScene],
+        scene: [MainScene, UIScene],
         scale: {
           mode: PhaserLib.Scale.FIT,
           autoCenter: PhaserLib.Scale.CENTER_BOTH,
