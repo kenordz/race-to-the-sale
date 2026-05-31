@@ -1,17 +1,23 @@
 import Phaser from "phaser";
 import { GAME_WIDTH } from "@/lib/game/scenes/MainScene";
 import type { Station } from "@/lib/game/stations";
+import {
+  STATION_TO_EVENT,
+  XP_PER_EVENT,
+  type EventType,
+} from "@/lib/game/xp-events";
+import { awardXP, getCurrentXP } from "@/app/play/actions";
 
-const XP_STORAGE_KEY = "rts:xp";
 const TOAST_DURATION_MS = 1800;
 
-type InteractPayload = { station: Station; xp: number };
+type InteractPayload = { station: Station };
 
 export class UIScene extends Phaser.Scene {
   private xp = 0;
   private xpText!: Phaser.GameObjects.Text;
   private toast!: Phaser.GameObjects.Container;
   private toastTween?: Phaser.Tweens.Tween;
+  private pending = 0;
 
   constructor() {
     super({ key: "UIScene" });
@@ -20,8 +26,6 @@ export class UIScene extends Phaser.Scene {
   create() {
     // Default camera at zoom 1, no scroll — every object lives in canvas
     // pixel space, so there is no scrollFactor/zoom math to worry about.
-
-    this.xp = this.loadXp();
 
     // ─── XP counter (top-left) ──────────────────────────────────────────
     const xpBg = this.add
@@ -55,6 +59,10 @@ export class UIScene extends Phaser.Scene {
     this.toast.setDepth(20);
     this.toast.setAlpha(0);
 
+    // Pull the initial total from Supabase so a fresh session shows whatever
+    // the user has earned across devices.
+    void this.loadInitialXp();
+
     // Wire the cross-scene event channel.
     const gameEvents = this.game.events;
     gameEvents.on("station:interact", this.handleInteract, this);
@@ -63,14 +71,51 @@ export class UIScene extends Phaser.Scene {
     });
   }
 
+  private async loadInitialXp() {
+    try {
+      const total = await getCurrentXP();
+      this.xp = total;
+      this.xpText.setText(this.formatXp());
+    } catch (err) {
+      // Failure here is non-fatal — HUD just stays at 0 until next interaction.
+      console.error("[UIScene] failed to load initial XP:", err);
+    }
+  }
+
   private handleInteract(payload: InteractPayload) {
-    this.xp += payload.xp;
-    this.saveXp();
+    const eventType: EventType = STATION_TO_EVENT[payload.station.type];
+    const xpDelta = XP_PER_EVENT[eventType];
+
+    // Optimistic update for snappy feedback. We reconcile with the server's
+    // authoritative sum once the insert returns.
+    this.pending += xpDelta;
+    this.xp += xpDelta;
     this.xpText.setText(this.formatXp());
     this.showToast(
-      `${payload.station.icon} ${payload.station.actionLabel}  +${payload.xp} XP`,
+      `${payload.station.icon} ${payload.station.actionLabel}  +${xpDelta} XP`,
       this.borderColorFor(payload.station.type)
     );
+
+    void this.persistInteract(eventType, xpDelta);
+  }
+
+  private async persistInteract(eventType: EventType, xpDelta: number) {
+    try {
+      const total = await awardXP({ eventType });
+      this.pending -= xpDelta;
+      // Reconcile with the server total, but only if no other inflight
+      // requests are pending — otherwise we'd snap back to a stale value.
+      if (this.pending === 0) {
+        this.xp = total;
+        this.xpText.setText(this.formatXp());
+      }
+    } catch (err) {
+      // Roll back the optimistic bump so the HUD stays truthful.
+      this.pending -= xpDelta;
+      this.xp -= xpDelta;
+      this.xpText.setText(this.formatXp());
+      console.error("[UIScene] failed to persist XP:", err);
+    }
   }
 
   private showToast(message: string, borderColor: number) {
@@ -117,17 +162,5 @@ export class UIScene extends Phaser.Scene {
 
   private formatXp(): string {
     return `✨ XP: ${this.xp}`;
-  }
-
-  private loadXp(): number {
-    if (typeof window === "undefined") return 0;
-    const raw = window.localStorage.getItem(XP_STORAGE_KEY);
-    const n = raw ? Number.parseInt(raw, 10) : 0;
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  }
-
-  private saveXp() {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(XP_STORAGE_KEY, String(this.xp));
   }
 }
