@@ -7,7 +7,12 @@ import {
   type Station,
 } from "@/lib/game/stations";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
-import { getMyDealershipId, getPendingLeads, type LeadRow } from "@/app/play/actions";
+import {
+  claimNextLead,
+  getMyDealershipId,
+  getPendingLeads,
+  type LeadRow,
+} from "@/app/play/actions";
 import { formatSourceLabel } from "@/lib/game/mock-data";
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 
@@ -296,10 +301,40 @@ export class MainScene extends Phaser.Scene {
             this.handleNewLead(lead);
           }
         )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "leads",
+          },
+          (payload) => {
+            const lead = payload.new as LeadRow;
+            if (lead.dealership_id !== dealershipId) return;
+            // A lead leaves the pending feed the moment its status flips
+            // away from 'new'. In Phase 3 that is always a claim (either
+            // by this player or, in Session 6's multiplayer, a teammate).
+            if (lead.status !== "new" && this.pendingLeads.has(lead.id)) {
+              this.removePendingLead(lead.id);
+            }
+          }
+        )
         .subscribe();
     } catch (err) {
       console.error("[lead feed] setup failed:", err);
     }
+  }
+
+  private removePendingLead(id: string) {
+    this.pendingLeads.delete(id);
+    const line = this.leadHudLines.get(id);
+    if (line) {
+      line.destroy();
+      this.leadHudLines.delete(id);
+    }
+    // Force a redraw on the next update tick instead of waiting up to a
+    // second for the throttled refresh.
+    this.leadHudLastRefresh = 0;
   }
 
   private handleNewLead(lead: LeadRow) {
@@ -402,8 +437,24 @@ export class MainScene extends Phaser.Scene {
     if (now - last < INTERACTION_COOLDOWN_MS) return;
     this.lastInteractAt.set(id, now);
 
-    // Visual flash: scale bump + briefly recolor the disc white, then back.
     const station = this.activeStation;
+    this.flashStation(station);
+
+    // The Lead Board claims the oldest pending lead instead of awarding a
+    // flat station_leads XP. Everything else (phone/computer/photo) keeps
+    // its existing station:interact flow so XP accumulates as before.
+    if (station.data.type === "leads") {
+      void this.handleClaimAttempt();
+      return;
+    }
+
+    this.game.events.emit("station:interact", {
+      station: station.data,
+      xp: station.data.xpReward,
+    });
+  }
+
+  private flashStation(station: StationView) {
     const originalFill = STATION_COLORS[station.data.type];
     station.circle.setFillStyle(0xffffff, 1);
     this.tweens.add({
@@ -416,11 +467,27 @@ export class MainScene extends Phaser.Scene {
         station.circle.setFillStyle(originalFill, 0.95);
       },
     });
+  }
 
-    this.game.events.emit("station:interact", {
-      station: station.data,
-      xp: station.data.xpReward,
-    });
+  private async handleClaimAttempt() {
+    try {
+      const result = await claimNextLead();
+      if (!result.ok) {
+        if (result.reason === "no_leads") {
+          this.game.events.emit("lead:none");
+        } else {
+          console.error("[claim] failed:", result);
+        }
+        return;
+      }
+      // Optimistically drop the lead from the in-memory feed; the Realtime
+      // UPDATE event would do this too but it can lag by 100-300ms and the
+      // toast/HUD look snappier when we remove it now.
+      this.removePendingLead(result.leadId);
+      this.game.events.emit("lead:claimed", result);
+    } catch (err) {
+      console.error("[claim] threw:", err);
+    }
   }
 
   private createStations() {
