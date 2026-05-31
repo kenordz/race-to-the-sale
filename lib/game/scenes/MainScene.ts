@@ -6,6 +6,10 @@ import {
   INTERACTION_COOLDOWN_MS,
   type Station,
 } from "@/lib/game/stations";
+import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { getMyDealershipId, getPendingLeads, type LeadRow } from "@/app/play/actions";
+import { formatSourceLabel } from "@/lib/game/mock-data";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 
 type StationView = {
   data: Station;
@@ -14,6 +18,12 @@ type StationView = {
   pulseTween: Phaser.Tweens.Tween;
   active: boolean;
 };
+
+// A lead stays "claimable" for 5 minutes from creation. After that the
+// countdown shows "UNGRABBED" (still in DB as 'new', but Phase 3 will award
+// less XP for claiming it).
+const LEAD_CLAIM_WINDOW_MS = 5 * 60 * 1000;
+const LEAD_HUD_REFRESH_MS = 1000;
 
 // Scene-v2: LimeZu Museum_room_2 — a tall 512x1056 vertical map with three
 // stacked levels (artifacts up top, statue hall in the middle, garden + pond
@@ -68,6 +78,17 @@ export class MainScene extends Phaser.Scene {
   private prompt!: Phaser.GameObjects.Container;
   private spaceKey!: Phaser.Input.Keyboard.Key;
   private lastInteractAt = new Map<string, number>();
+
+  // Lead feed state. supabaseClient/realtimeChannel are torn down on
+  // SHUTDOWN. pendingLeads is the in-memory mirror of all leads with
+  // status='new' for the user's dealership.
+  private supabaseClient: SupabaseClient | null = null;
+  private realtimeChannel: RealtimeChannel | null = null;
+  private pendingLeads = new Map<string, LeadRow>();
+  private leadHud!: Phaser.GameObjects.Container;
+  private leadHudHeader!: Phaser.GameObjects.Text;
+  private leadHudLines = new Map<string, Phaser.GameObjects.Text>();
+  private leadHudLastRefresh = 0;
 
   constructor() {
     super({ key: "MainScene" });
@@ -188,6 +209,189 @@ export class MainScene extends Phaser.Scene {
     // UI HUD lives in its own scene so it can render in canvas pixel space
     // without fighting the main camera's zoom or scroll.
     this.scene.launch("UIScene");
+
+    // Lead feed: subscribe to Realtime + hydrate initial pending leads.
+    this.setupLeadHud();
+    void this.setupLeadFeed();
+
+    // Clean up the Realtime subscription when the scene shuts down (HMR,
+    // navigation away, etc.) so we do not leak channel handlers.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (this.realtimeChannel && this.supabaseClient) {
+        void this.supabaseClient.removeChannel(this.realtimeChannel);
+      }
+      this.realtimeChannel = null;
+      this.supabaseClient = null;
+    });
+  }
+
+  private setupLeadHud() {
+    // HUD floats just above the Lead Board station (the purple one), in
+    // world coords so it scrolls with the camera. The header line is always
+    // present; per-lead lines are added/removed as leads stream in.
+    const leadStation = STATIONS.find((s) => s.type === "leads");
+    if (!leadStation) return;
+
+    this.leadHud = this.add.container(leadStation.x, leadStation.y - 80);
+    this.leadHud.setDepth(50);
+
+    this.leadHudHeader = this.add
+      .text(0, 0, "Leads pendientes: 0", {
+        fontSize: "11px",
+        fontFamily: "monospace",
+        color: "#ffffff",
+        backgroundColor: "#000000cc",
+        padding: { x: 6, y: 3 },
+      })
+      .setOrigin(0.5, 1);
+    this.leadHud.add(this.leadHudHeader);
+  }
+
+  private async setupLeadFeed() {
+    try {
+      // Create the Supabase client *first* so its Realtime WebSocket can
+      // start connecting in the background while we await the server
+      // actions below. If we create it just before subscribing, the first
+      // postgres_changes binding races with the WS handshake and delivery
+      // silently fails — even though state reports "joined" and the
+      // subscribe callback fires "SUBSCRIBED". The two awaits below give
+      // the WS the ~100-300ms it needs to settle.
+      this.supabaseClient = createBrowserSupabaseClient();
+
+      const dealershipId = await getMyDealershipId();
+      if (!dealershipId) {
+        console.warn("[lead feed] no dealership_id on profile, skipping");
+        return;
+      }
+
+      // Hydrate the current pending leads so countdowns are accurate after
+      // a refresh (their created_at is the source of truth).
+      const existing = await getPendingLeads();
+      for (const lead of existing) this.pendingLeads.set(lead.id, lead);
+
+      // Two non-obvious things to know about this subscription:
+      // 1. Channel names must be unique per page load. Re-using a name like
+      //    "leads-feed" across hot reloads silently breaks delivery — the
+      //    server-side config from the first mount sticks and later mounts
+      //    join but never receive events. We tag the name with a timestamp.
+      // 2. postgres_changes filters on UUID columns are unreliable. The
+      //    filter `dealership_id=eq.{uuid}` matches nothing even when the
+      //    value is correct. We subscribe unfiltered and discriminate in
+      //    the callback. RLS keeps cross-dealership data out of selects;
+      //    Realtime broadcasts everything to subscribers, so the JS-side
+      //    check is what isolates tenants on the live feed.
+      const channelName = `leads-feed-${Date.now()}`;
+      this.realtimeChannel = this.supabaseClient
+        .channel(channelName)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "leads",
+          },
+          (payload) => {
+            const lead = payload.new as LeadRow;
+            if (lead.dealership_id !== dealershipId) return;
+            this.handleNewLead(lead);
+          }
+        )
+        .subscribe();
+    } catch (err) {
+      console.error("[lead feed] setup failed:", err);
+    }
+  }
+
+  private handleNewLead(lead: LeadRow) {
+    if (this.pendingLeads.has(lead.id)) return; // de-dupe
+    this.pendingLeads.set(lead.id, lead);
+
+    // Visual: red pulse on the Lead Board station, 3 bumps over ~600ms.
+    const leadStation = this.stations.find((s) => s.data.type === "leads");
+    if (leadStation) {
+      const circle = leadStation.circle;
+      circle.setFillStyle(0xef4444, 1);
+      this.tweens.add({
+        targets: circle,
+        scale: 1.3,
+        duration: 100,
+        ease: "Quad.easeOut",
+        yoyo: true,
+        repeat: 2,
+        onComplete: () => {
+          circle.setFillStyle(STATION_COLORS[leadStation.data.type], 0.95);
+        },
+      });
+    }
+
+    // Fan the event out to the UI scene (toast + beep live there).
+    this.game.events.emit("lead:new", lead);
+  }
+
+  private updateLeadHud(timeMs: number) {
+    if (timeMs - this.leadHudLastRefresh < LEAD_HUD_REFRESH_MS) return;
+    this.leadHudLastRefresh = timeMs;
+    if (!this.leadHud) return;
+
+    this.leadHudHeader.setText(`Leads pendientes: ${this.pendingLeads.size}`);
+
+    // Drop any line whose lead is no longer pending (Phase 3 will claim
+    // leads which removes them from the map).
+    for (const [id, lineText] of this.leadHudLines) {
+      if (!this.pendingLeads.has(id)) {
+        lineText.destroy();
+        this.leadHudLines.delete(id);
+      }
+    }
+
+    // Create or update a line per pending lead. Sorted by oldest first so
+    // the most urgent (closest to ungrabbed) sits at the top of the list.
+    const now = Date.now();
+    const sorted = [...this.pendingLeads.values()].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+
+    let y = 4;
+    for (const lead of sorted) {
+      let line = this.leadHudLines.get(lead.id);
+      if (!line) {
+        line = this.add
+          .text(0, 0, "", {
+            fontSize: "10px",
+            fontFamily: "monospace",
+            color: "#ffffff",
+            backgroundColor: "#000000cc",
+            padding: { x: 6, y: 2 },
+          })
+          .setOrigin(0.5, 0);
+        this.leadHud.add(line);
+        this.leadHudLines.set(lead.id, line);
+      }
+
+      const createdAt = new Date(lead.created_at).getTime();
+      const msLeft = createdAt + LEAD_CLAIM_WINDOW_MS - now;
+
+      let color: string;
+      let body: string;
+      if (msLeft <= 0) {
+        color = "#9ca3af"; // gray
+        body = `${formatSourceLabel(lead.source)} — UNGRABBED`;
+      } else {
+        const mins = Math.floor(msLeft / 60_000);
+        const secs = Math.floor((msLeft % 60_000) / 1000);
+        const stamp = `${mins}:${secs.toString().padStart(2, "0")}`;
+        if (msLeft < 60_000) color = "#ef4444"; // red
+        else if (msLeft < 180_000) color = "#eab308"; // yellow
+        else color = "#22c55e"; // green
+        body = `${formatSourceLabel(lead.source)}  ${stamp}`;
+      }
+
+      line.setColor(color);
+      line.setText(body);
+      line.setY(y);
+      y += 14;
+    }
   }
 
   private tryInteract() {
@@ -319,8 +523,9 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  update() {
+  update(timeMs: number) {
     if (!this.player || !this.cursors) return;
+    this.updateLeadHud(timeMs);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     let vx = 0;
     let vy = 0;

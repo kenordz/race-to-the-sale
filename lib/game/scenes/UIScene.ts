@@ -6,9 +6,11 @@ import {
   XP_PER_EVENT,
   type EventType,
 } from "@/lib/game/xp-events";
-import { awardXP, getCurrentXP } from "@/app/play/actions";
+import { awardXP, getCurrentXP, type LeadRow } from "@/app/play/actions";
+import { formatSourceLabel } from "@/lib/game/mock-data";
 
 const TOAST_DURATION_MS = 1800;
+const LEAD_TOAST_DURATION_MS = 3000;
 
 type InteractPayload = { station: Station };
 
@@ -66,9 +68,57 @@ export class UIScene extends Phaser.Scene {
     // Wire the cross-scene event channel.
     const gameEvents = this.game.events;
     gameEvents.on("station:interact", this.handleInteract, this);
+    gameEvents.on("lead:new", this.handleNewLead, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       gameEvents.off("station:interact", this.handleInteract, this);
+      gameEvents.off("lead:new", this.handleNewLead, this);
     });
+  }
+
+  private handleNewLead(lead: LeadRow) {
+    const source = formatSourceLabel(lead.source);
+    this.showToast(
+      `🚨 NEW LEAD from ${source} — 5:00 to claim!`,
+      0xef4444, // red border, urgent
+      LEAD_TOAST_DURATION_MS
+    );
+    this.playLeadBeep();
+  }
+
+  private playLeadBeep() {
+    // Ascending double-chime via Web Audio API. Created lazily per beep so
+    // we do not have to manage a long-lived AudioContext. If the browser is
+    // still suspended (no user gesture yet) the call is a silent no-op.
+    try {
+      const AudioCtor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      const ctx = new AudioCtor();
+      const play = (freq: number, startOffset: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t0 = ctx.currentTime + startOffset;
+        gain.gain.setValueAtTime(0, t0);
+        gain.gain.linearRampToValueAtTime(0.18, t0 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.start(t0);
+        osc.stop(t0 + duration);
+      };
+      play(1046, 0, 0.18); // C6
+      play(1318, 0.11, 0.22); // E6
+      setTimeout(() => {
+        void ctx.close();
+      }, 500);
+    } catch (err) {
+      // Some browsers throw before any user gesture; that is fine — the
+      // visual toast already covers the alert path.
+      console.warn("[lead beep] suppressed:", err);
+    }
   }
 
   private async loadInitialXp() {
@@ -118,7 +168,11 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
-  private showToast(message: string, borderColor: number) {
+  private showToast(
+    message: string,
+    borderColor: number,
+    duration: number = TOAST_DURATION_MS
+  ) {
     const [bg, text] = this.toast.getAll() as [
       Phaser.GameObjects.Rectangle,
       Phaser.GameObjects.Text,
@@ -140,7 +194,7 @@ export class UIScene extends Phaser.Scene {
           targets: this.toast,
           alpha: 0,
           duration: 400,
-          delay: TOAST_DURATION_MS - 180 - 400,
+          delay: Math.max(0, duration - 180 - 400),
           ease: "Quad.easeIn",
         });
       },

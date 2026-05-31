@@ -3,6 +3,15 @@
 import { useEffect, useRef } from "react";
 import type Phaser from "phaser";
 import { GAME_HEIGHT, GAME_WIDTH } from "@/lib/game/scenes/MainScene";
+import { generateMockLead } from "@/app/play/actions";
+
+// Random delay in milliseconds for the next mock lead. Range tuned so the
+// demo feels lively but not spammy — 30-90s.
+const LEAD_INTERVAL_MIN_MS = 30_000;
+const LEAD_INTERVAL_MAX_MS = 90_000;
+const pickNextDelay = () =>
+  LEAD_INTERVAL_MIN_MS +
+  Math.floor(Math.random() * (LEAD_INTERVAL_MAX_MS - LEAD_INTERVAL_MIN_MS));
 
 export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -54,6 +63,37 @@ export default function GameCanvas() {
       cancelled = true;
       gameRef.current?.destroy(true);
       gameRef.current = null;
+    };
+  }, []);
+
+  // Mock lead generator. This is a stand-in for the DriveCentric ADF feed
+  // that will drive production. Lives on the client because each user's
+  // browser independently triggers leads for demo purposes; in production
+  // the server (or an edge function on a cron) would own this.
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const scheduleNext = () => {
+      const delay = pickNextDelay();
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          await generateMockLead();
+        } catch (err) {
+          // Swallow — the user might not have a dealership yet, or the
+          // network might be flaky. We try again next tick.
+          console.error("[mock lead] generation failed:", err);
+        }
+        if (!cancelled) scheduleNext();
+      }, delay);
+    };
+
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, []);
 
