@@ -1,7 +1,7 @@
 // Interactive stations the player walks up to and triggers with SPACE.
-// Positions are in world coordinates (the Museum_room_2 background is
-// 512x1056). Distributed across the three vertical levels so the player
-// has a reason to traverse the map.
+// Positions are in world coordinates against the Office_Design_2 layout
+// (512x544): top rows are cubicle desks, bottom-left is print/supply,
+// bottom-right is an open meeting space.
 
 export type StationType = "phone" | "computer" | "photo" | "leads";
 
@@ -24,41 +24,46 @@ export const STATION_COLORS: Record<StationType, number> = {
 };
 
 export const STATIONS: ReadonlyArray<Station> = [
+  // Phone Booth — in front of a left-side cubicle in the upper row.
   {
     id: "phone-1",
     type: "phone",
-    x: 140,
-    y: 200,
+    x: 100,
+    y: 165,
     label: "Phone Booth",
     icon: "📞",
     actionLabel: "Llamada hecha",
     xpReward: 10,
   },
+  // Computer Desk — center cubicle in the upper row, the "main" workstation.
   {
     id: "computer-1",
     type: "computer",
-    x: 360,
-    y: 200,
+    x: 256,
+    y: 165,
     label: "Computer Desk",
     icon: "💻",
     actionLabel: "Email enviado",
     xpReward: 5,
   },
+  // Photo Station — bottom-left print/supply area; quiet corner.
   {
     id: "photo-1",
     type: "photo",
-    x: 256,
-    y: 580,
+    x: 130,
+    y: 455,
     label: "Photo Station",
     icon: "📸",
     actionLabel: "Foto tomada",
     xpReward: 5,
   },
+  // Lead Board — bottom-right meeting area near the wall poster, the spot
+  // a real sales floor would post the day's hot leads.
   {
     id: "leads-1",
     type: "leads",
-    x: 256,
-    y: 900,
+    x: 400,
+    y: 455,
     label: "Leads Board",
     icon: "📋",
     actionLabel: "Lead capturado",

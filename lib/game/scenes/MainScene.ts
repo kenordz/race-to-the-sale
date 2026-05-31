@@ -30,11 +30,12 @@ type StationView = {
 const LEAD_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 const LEAD_HUD_REFRESH_MS = 1000;
 
-// Scene-v2: LimeZu Museum_room_2 — a tall 512x1056 vertical map with three
-// stacked levels (artifacts up top, statue hall in the middle, garden + pond
-// at the bottom). World is the image; there is no void around it.
+// Scene-v3: LimeZu "Modern Office Revamped" Office_Design_2 — a 512x544
+// open sales floor. Top rows are sales cubicles, bottom-left is a print/
+// supply area, bottom-right is an open meeting space. Fits the dealership
+// pitch better than the museum it replaced.
 const WORLD_WIDTH = 512;
-const WORLD_HEIGHT = 1056;
+const WORLD_HEIGHT = 544;
 const ZOOM = 2;
 // 16:9 widescreen canvas. Camera viewport is wider than the world, so the
 // world renders centered with dark void on both sides — gives a "vertical
@@ -104,7 +105,7 @@ export class MainScene extends Phaser.Scene {
       frameWidth: FRAME_W,
       frameHeight: FRAME_H,
     });
-    this.load.image("scene-bg", "/game/backgrounds/scene-v2.png");
+    this.load.image("scene-bg", "/game/backgrounds/office-v3.png");
   }
 
   create() {
@@ -158,12 +159,11 @@ export class MainScene extends Phaser.Scene {
     // with the collision body and the head extends upward into the cell
     // above. Body covers only the feet/legs so the head can pass in front
     // of walls and decor without colliding.
-    // Start the player at the bottom-center of the map (garden/pond level).
-    // The camera will follow upward as they walk through the statue hall and
-    // into the artifact room at the top.
+    // Spawn the player in the central walkway between the second cubicle
+    // row and the divider — clear floor, equidistant from all four stations.
     this.player = this.physics.add.sprite(
       WORLD_WIDTH / 2,
-      WORLD_HEIGHT - 80,
+      330,
       "character",
       frame(DIR_OFFSET.down, IDLE_ROW)
     );
