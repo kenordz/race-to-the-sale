@@ -6,6 +6,7 @@ import {
   MOCK_CUSTOMER_NAMES,
   MOCK_LEAD_SOURCES,
   MOCK_VEHICLE_INTERESTS,
+  mockEmailFor,
   pickRandom,
 } from "@/lib/game/mock-data";
 
@@ -16,6 +17,7 @@ export type LeadRow = {
   status: string;
   age_bucket: string;
   customer_name: string | null;
+  customer_email: string | null;
   vehicle_interest: string | null;
   created_at: string;
   claimed_at: string | null;
@@ -113,6 +115,7 @@ export async function generateMockLead(): Promise<LeadRow> {
   const source = pickRandom(MOCK_LEAD_SOURCES);
   const customer_name = pickRandom(MOCK_CUSTOMER_NAMES);
   const vehicle_interest = pickRandom(MOCK_VEHICLE_INTERESTS);
+  const customer_email = mockEmailFor(customer_name);
 
   const { data, error } = await supabase
     .from("leads")
@@ -120,6 +123,7 @@ export async function generateMockLead(): Promise<LeadRow> {
       dealership_id: profile.dealership_id,
       source,
       customer_name,
+      customer_email,
       vehicle_interest,
     })
     .select()
@@ -222,7 +226,175 @@ export async function getTodayActivities(): Promise<TodayActivitySummary> {
     if (t.startsWith("lead_claimed_")) summary.byCategory.leads += 1;
     else if (t === "station_phone") summary.byCategory.calls += 1;
     else if (t === "station_computer") summary.byCategory.emails += 1;
+    else if (t === "email_sent") summary.byCategory.emails += 1;
     else if (t === "station_photo") summary.byCategory.media += 1;
   }
   return summary;
+}
+
+export async function getMyClaimedLeads(): Promise<LeadRow[]> {
+  const supabase = await createClient();
+  const userId = await getAuthedUserId();
+  // The Email Composer needs the player's own leads that are still in the
+  // top of the funnel — claimed (just grabbed) or contacted (already
+  // emailed once). Anything sold/dead/etc. is hidden so the dropdown stays
+  // short and on-task.
+  const { data, error } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("claimed_by", userId)
+    .in("status", ["claimed", "contacted"])
+    .order("claimed_at", { ascending: false });
+  if (error) throw new Error(`getMyClaimedLeads: ${error.message}`);
+  return (data ?? []) as LeadRow[];
+}
+
+export type SendEmailResult =
+  | {
+      ok: true;
+      communicationId: string;
+      externalId: string;
+      newTotalXP: number;
+      recipient: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | "not_claimed_by_user"
+        | "lead_not_found"
+        | "user_has_no_dealership"
+        | "send_failed";
+      message?: string;
+    };
+
+export async function sendLeadEmail(args: {
+  leadId: string;
+  template: import("@/lib/server/email-templates").EmailTemplateName;
+}): Promise<SendEmailResult> {
+  // Imports kept inline so the file does not pull the Resend SDK into the
+  // bundle for every action.
+  const { renderTemplate } = await import("@/lib/server/email-templates");
+  const { sendEmail } = await import("@/lib/server/email");
+
+  const supabase = await createClient();
+  const userId = await getAuthedUserId();
+
+  // Pull the lead + the user's profile + dealership name in three calls.
+  // We do them sequentially because each enforces a different invariant.
+  const { data: lead, error: leadErr } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", args.leadId)
+    .single();
+  if (leadErr || !lead) {
+    return { ok: false, reason: "lead_not_found", message: leadErr?.message };
+  }
+  if (lead.claimed_by !== userId) {
+    return { ok: false, reason: "not_claimed_by_user" };
+  }
+
+  const { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("full_name, dealership_id")
+    .eq("id", userId)
+    .single();
+  if (profileErr || !profile?.dealership_id) {
+    return { ok: false, reason: "user_has_no_dealership", message: profileErr?.message };
+  }
+
+  const { data: dealership } = await supabase
+    .from("dealerships")
+    .select("name")
+    .eq("id", profile.dealership_id)
+    .single();
+
+  const rendered = renderTemplate(args.template, {
+    customerName: lead.customer_name ?? "there",
+    vehicleInterest: lead.vehicle_interest ?? "your vehicle",
+    dealershipName: dealership?.name ?? "the dealership",
+    salespersonName: profile.full_name ?? "Your sales contact",
+  });
+
+  // Prototype routing: every outbound email goes to EMAIL_TEST_RECIPIENT so
+  // we never spam real @example.com inboxes during dev. The customer_email
+  // is still recorded on the comm row so the path to production routing is
+  // a single config flip.
+  const recipientForSend = process.env.EMAIL_TEST_RECIPIENT;
+  if (!recipientForSend) {
+    return {
+      ok: false,
+      reason: "send_failed",
+      message: "EMAIL_TEST_RECIPIENT is not set",
+    };
+  }
+
+  let externalId: string;
+  try {
+    const result = await sendEmail({
+      to: recipientForSend,
+      subject: rendered.subject,
+      html: rendered.html,
+    });
+    externalId = result.id;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "send_failed",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // Log the communication, the XP event, and bump the lead status. Three
+  // INSERT/UPDATEs that are not in one transaction — acceptable here because
+  // they are all best-effort writes after the email already shipped; if
+  // any of them fail the user will see the toast but the inbox proof is
+  // already on its way.
+  const { data: commRow, error: commErr } = await supabase
+    .from("lead_communications")
+    .insert({
+      lead_id: lead.id,
+      profile_id: userId,
+      type: "email",
+      template_used: args.template,
+      subject: rendered.subject,
+      content: rendered.html,
+      recipient: lead.customer_email ?? recipientForSend,
+      external_id: externalId,
+      metadata: { actual_recipient: recipientForSend },
+    })
+    .select("id")
+    .single();
+  if (commErr || !commRow) {
+    return {
+      ok: false,
+      reason: "send_failed",
+      message: `comm log failed: ${commErr?.message ?? "no row"}`,
+    };
+  }
+
+  const { error: xpErr } = await supabase.from("xp_events").insert({
+    profile_id: userId,
+    event_type: "email_sent",
+    xp_amount: XP_PER_EVENT.email_sent,
+    lead_id: lead.id,
+  });
+  if (xpErr) {
+    return { ok: false, reason: "send_failed", message: `xp log failed: ${xpErr.message}` };
+  }
+
+  // A first email graduates the lead from claimed → contacted. Subsequent
+  // emails on the same lead do nothing here.
+  if (lead.status === "claimed") {
+    await supabase.from("leads").update({ status: "contacted" }).eq("id", lead.id);
+  }
+
+  const newTotalXP = await getCurrentXP();
+
+  return {
+    ok: true,
+    communicationId: commRow.id,
+    externalId,
+    newTotalXP,
+    recipient: recipientForSend,
+  };
 }

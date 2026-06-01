@@ -441,10 +441,19 @@ export class MainScene extends Phaser.Scene {
     this.flashStation(station);
 
     // The Lead Board claims the oldest pending lead instead of awarding a
-    // flat station_leads XP. Everything else (phone/computer/photo) keeps
-    // its existing station:interact flow so XP accumulates as before.
+    // flat station_leads XP. The Computer Desk opens the React Email
+    // Composer (real send via Resend) instead of awarding station_computer
+    // XP. The remaining two stations (phone, photo) keep their existing
+    // station:interact flow so casual activity still counts.
     if (station.data.type === "leads") {
       void this.handleClaimAttempt();
+      return;
+    }
+    if (station.data.type === "computer") {
+      // Pause the game so SPACE/arrow keys do not leak into other stations
+      // while the modal is open. GameCanvas resumes on close.
+      this.scene.pause();
+      this.game.events.emit("open:email-composer");
       return;
     }
 

@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type Phaser from "phaser";
 import { GAME_HEIGHT, GAME_WIDTH } from "@/lib/game/scenes/MainScene";
-import { generateMockLead } from "@/app/play/actions";
+import {
+  generateMockLead,
+  type SendEmailResult,
+} from "@/app/play/actions";
+import EmailComposerModal from "@/components/EmailComposerModal";
 
 // Random delay in milliseconds for the next mock lead. Range tuned so the
 // demo feels lively but not spammy — 30-90s.
@@ -16,6 +20,7 @@ const pickNextDelay = () =>
 export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -57,6 +62,13 @@ export default function GameCanvas() {
         (window as unknown as { __phaserGame?: Phaser.Game }).__phaserGame =
           gameRef.current;
       }
+      // Bridge: MainScene emits "open:email-composer" when the player
+      // SPACE's on the Computer Desk. React owns the modal; Phaser is
+      // paused while it's up to avoid bleeding keystrokes into other
+      // stations.
+      gameRef.current.events.on("open:email-composer", () => {
+        setEmailOpen(true);
+      });
     })();
 
     return () => {
@@ -97,10 +109,38 @@ export default function GameCanvas() {
     };
   }, []);
 
+  const closeEmail = useCallback(() => {
+    setEmailOpen(false);
+    // Resume the Phaser scene so input + animations pick back up.
+    const game = gameRef.current;
+    if (game) {
+      const main = game.scene.getScene("MainScene");
+      if (main && main.scene.isPaused()) main.scene.resume();
+    }
+  }, []);
+
+  const onEmailSent = useCallback(
+    (result: Extract<SendEmailResult, { ok: true }>) => {
+      // Hand the new XP total back into the UIScene so the HUD picks up
+      // immediately without a getCurrentXP roundtrip.
+      const game = gameRef.current;
+      game?.events.emit("xp:set", { total: result.newTotalXP });
+      game?.events.emit("email:sent-toast", { recipient: result.recipient });
+    },
+    []
+  );
+
   return (
-    <div
-      ref={containerRef}
-      className="aspect-video w-full max-w-[1280px] overflow-hidden rounded-xl border border-white/10 shadow-2xl"
-    />
+    <>
+      <div
+        ref={containerRef}
+        className="aspect-video w-full max-w-[1280px] overflow-hidden rounded-xl border border-white/10 shadow-2xl"
+      />
+      <EmailComposerModal
+        open={emailOpen}
+        onClose={closeEmail}
+        onSent={onEmailSent}
+      />
+    </>
   );
 }

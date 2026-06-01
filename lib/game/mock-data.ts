@@ -68,6 +68,20 @@ export function pickRandom<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// Derive a fake @example.com email from a mock customer's full name so each
+// customer carries an email through the pipeline. The actual outbound
+// recipient is still EMAIL_TEST_RECIPIENT in dev (see sendLeadEmail),
+// because we do not want test emails landing in @example.com inboxes.
+export function mockEmailFor(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z]+/g, ".")
+    .replace(/^\.|\.$/g, "");
+  return `${slug}@example.com`;
+}
+
 export function formatSourceLabel(source: string): string {
   // 'phone_up' -> 'PHONE UP', 'walk_in' -> 'WALK-IN', 'third_party' -> 'THIRD PARTY'
   if (source === "walk_in") return "WALK-IN";

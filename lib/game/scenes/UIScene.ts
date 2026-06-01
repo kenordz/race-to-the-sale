@@ -123,12 +123,35 @@ export class UIScene extends Phaser.Scene {
     gameEvents.on("lead:new", this.handleNewLead, this);
     gameEvents.on("lead:claimed", this.handleClaimed, this);
     gameEvents.on("lead:none", this.handleNoLeads, this);
+    gameEvents.on("xp:set", this.handleXpSet, this);
+    gameEvents.on("email:sent-toast", this.handleEmailSentToast, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       gameEvents.off("station:interact", this.handleInteract, this);
       gameEvents.off("lead:new", this.handleNewLead, this);
       gameEvents.off("lead:claimed", this.handleClaimed, this);
       gameEvents.off("lead:none", this.handleNoLeads, this);
+      gameEvents.off("xp:set", this.handleXpSet, this);
+      gameEvents.off("email:sent-toast", this.handleEmailSentToast, this);
     });
+  }
+
+  private handleXpSet(payload: { total: number }) {
+    this.xp = payload.total;
+    this.xpText.setText(this.formatXp());
+    void this.refreshDailyActivity();
+  }
+
+  private handleEmailSentToast(payload: { recipient: string }) {
+    // The +XP toast is implied by the XP counter jumping; we use the
+    // toast slot to confirm where the email actually went, which matters
+    // for the demo ("look, it went to YOUR inbox, not a fake one").
+    const xp = XP_PER_EVENT.email_sent;
+    this.showToast(
+      `✉️  Email sent to ${payload.recipient}  +${xp} XP`,
+      0x10b981,
+      CLAIM_TOAST_DURATION_MS
+    );
+    this.bumpDaily(1);
   }
 
   private handleClaimed(result: Extract<ClaimResult, { ok: true }>) {

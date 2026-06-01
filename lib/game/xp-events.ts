@@ -13,7 +13,8 @@ export type EventType =
   | "station_phone"
   | "station_computer"
   | "station_photo"
-  | "station_leads";
+  | "station_leads"
+  | "email_sent";
 
 export const XP_PER_EVENT: Record<EventType, number> = {
   lead_claimed_lightning: 75,
@@ -25,6 +26,9 @@ export const XP_PER_EVENT: Record<EventType, number> = {
   station_computer: 5,
   station_photo: 5,
   station_leads: 20,
+  // Higher than station_computer because this is real outbound work (a
+  // real email is sent, not just a counter bump).
+  email_sent: 15,
 };
 
 export const STATION_TO_EVENT: Record<StationType, EventType> = {
