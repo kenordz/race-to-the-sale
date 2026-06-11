@@ -6,15 +6,17 @@ import {
   INTERACTION_COOLDOWN_MS,
   type Station,
 } from "@/lib/game/stations";
-import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
-import {
-  claimNextLead,
-  getMyDealershipId,
-  getPendingLeads,
-  type LeadRow,
-} from "@/app/play/actions";
+import { claimNextLead, getTodayActivities } from "@/app/play/actions";
+import { gameStore } from "@/lib/game/store";
 import { formatSourceLabel } from "@/lib/game/mock-data";
-import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import type { EventType } from "@/lib/game/xp-events";
+
+// MainScene is a RENDERER. It owns no game state: pending leads, XP and
+// daily totals live in lib/game/store.ts (fed by lib/game/lead-feed.ts and
+// server actions). The scene reads the store every frame for the in-world
+// lead HUD and subscribes for "new lead" pulses. The only writes it does
+// are the results of *player actions* (claiming a lead), and even those go
+// straight back into the store for React + Phaser to render.
 
 type StationView = {
   data: Station;
@@ -25,10 +27,24 @@ type StationView = {
 };
 
 // A lead stays "claimable" for 5 minutes from creation. After that the
-// countdown shows "UNGRABBED" (still in DB as 'new', but Phase 3 will award
-// less XP for claiming it).
+// countdown shows "UNGRABBED" (still in DB as 'new', but claiming it awards
+// less XP).
 const LEAD_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 const LEAD_HUD_REFRESH_MS = 1000;
+
+// Toast styling per claim tier — color is the toast border accent.
+// Bigger reward = warmer color.
+const CLAIM_STYLES: Partial<Record<EventType, { label: string; accent: string }>> = {
+  lead_claimed_lightning: { label: "⚡ LIGHTNING RESPONSE!", accent: "#facc15" },
+  lead_claimed_fast: { label: "🔥 Fast Response", accent: "#f97316" },
+  lead_claimed_ontime: { label: "✓ On-Time", accent: "#22c55e" },
+  lead_claimed_late: { label: "Caught Late", accent: "#3b82f6" },
+  lead_claimed_stale: { label: "Stale Lead", accent: "#9ca3af" },
+  lead_stolen: { label: "😈 LEAD STOLEN!", accent: "#f97316" },
+};
+const CLAIM_TOAST_DURATION_MS = 2500;
+const NONE_TOAST_DURATION_MS = 1500;
+const PLACEHOLDER_TOAST_DURATION_MS = 1800;
 
 // Scene-v3: LimeZu "Modern Office Revamped" Office_Design_2 — a 512x544
 // open sales floor. Top rows are sales cubicles, bottom-left is a print/
@@ -85,16 +101,13 @@ export class MainScene extends Phaser.Scene {
   private spaceKey!: Phaser.Input.Keyboard.Key;
   private lastInteractAt = new Map<string, number>();
 
-  // Lead feed state. supabaseClient/realtimeChannel are torn down on
-  // SHUTDOWN. pendingLeads is the in-memory mirror of all leads with
-  // status='new' for the user's dealership.
-  private supabaseClient: SupabaseClient | null = null;
-  private realtimeChannel: RealtimeChannel | null = null;
-  private pendingLeads = new Map<string, LeadRow>();
+  // In-world lead HUD (floats above the Lead Board). Data comes from the
+  // store; these are just the Phaser text objects that render it.
   private leadHud!: Phaser.GameObjects.Container;
   private leadHudHeader!: Phaser.GameObjects.Text;
   private leadHudLines = new Map<string, Phaser.GameObjects.Text>();
   private leadHudLastRefresh = 0;
+  private unsubscribeStore: (() => void) | null = null;
 
   constructor() {
     super({ key: "MainScene" });
@@ -211,22 +224,22 @@ export class MainScene extends Phaser.Scene {
     this.spaceKey.on("down", this.tryInteract, this);
     this.player.anims.play(`idle-${this.facing}`);
 
-    // UI HUD lives in its own scene so it can render in canvas pixel space
-    // without fighting the main camera's zoom or scroll.
-    this.scene.launch("UIScene");
-
-    // Lead feed: subscribe to Realtime + hydrate initial pending leads.
+    // ─── Store wiring ────────────────────────────────────────────────────
+    // The lead feed (Realtime subscription) is owned by React (GameCanvas →
+    // startLeadFeed). Here we only *react* to the store: when a new pending
+    // lead appears, pulse the Lead Board badge.
     this.setupLeadHud();
-    void this.setupLeadFeed();
-
-    // Clean up the Realtime subscription when the scene shuts down (HMR,
-    // navigation away, etc.) so we do not leak channel handlers.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      if (this.realtimeChannel && this.supabaseClient) {
-        void this.supabaseClient.removeChannel(this.realtimeChannel);
+    this.unsubscribeStore = gameStore.subscribe((state, prev) => {
+      if (state.pendingLeads.size > prev.pendingLeads.size) {
+        this.pulseLeadStation(0xef4444); // red: fresh lead, race!
+      } else if (state.stealableLeads.size > prev.stealableLeads.size) {
+        this.pulseLeadStation(0xf97316); // orange: steal opportunity
       }
-      this.realtimeChannel = null;
-      this.supabaseClient = null;
+    });
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.unsubscribeStore?.();
+      this.unsubscribeStore = null;
     });
   }
 
@@ -252,115 +265,26 @@ export class MainScene extends Phaser.Scene {
     this.leadHud.add(this.leadHudHeader);
   }
 
-  private async setupLeadFeed() {
-    try {
-      // Create the Supabase client *first* so its Realtime WebSocket can
-      // start connecting in the background while we await the server
-      // actions below. If we create it just before subscribing, the first
-      // postgres_changes binding races with the WS handshake and delivery
-      // silently fails — even though state reports "joined" and the
-      // subscribe callback fires "SUBSCRIBED". The two awaits below give
-      // the WS the ~100-300ms it needs to settle.
-      this.supabaseClient = createBrowserSupabaseClient();
-
-      const dealershipId = await getMyDealershipId();
-      if (!dealershipId) {
-        console.warn("[lead feed] no dealership_id on profile, skipping");
-        return;
-      }
-
-      // Hydrate the current pending leads so countdowns are accurate after
-      // a refresh (their created_at is the source of truth).
-      const existing = await getPendingLeads();
-      for (const lead of existing) this.pendingLeads.set(lead.id, lead);
-
-      // Two non-obvious things to know about this subscription:
-      // 1. Channel names must be unique per page load. Re-using a name like
-      //    "leads-feed" across hot reloads silently breaks delivery — the
-      //    server-side config from the first mount sticks and later mounts
-      //    join but never receive events. We tag the name with a timestamp.
-      // 2. postgres_changes filters on UUID columns are unreliable. The
-      //    filter `dealership_id=eq.{uuid}` matches nothing even when the
-      //    value is correct. We subscribe unfiltered and discriminate in
-      //    the callback. RLS keeps cross-dealership data out of selects;
-      //    Realtime broadcasts everything to subscribers, so the JS-side
-      //    check is what isolates tenants on the live feed.
-      const channelName = `leads-feed-${Date.now()}`;
-      this.realtimeChannel = this.supabaseClient
-        .channel(channelName)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "leads",
-          },
-          (payload) => {
-            const lead = payload.new as LeadRow;
-            if (lead.dealership_id !== dealershipId) return;
-            this.handleNewLead(lead);
-          }
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "leads",
-          },
-          (payload) => {
-            const lead = payload.new as LeadRow;
-            if (lead.dealership_id !== dealershipId) return;
-            // A lead leaves the pending feed the moment its status flips
-            // away from 'new'. In Phase 3 that is always a claim (either
-            // by this player or, in Session 6's multiplayer, a teammate).
-            if (lead.status !== "new" && this.pendingLeads.has(lead.id)) {
-              this.removePendingLead(lead.id);
-            }
-          }
-        )
-        .subscribe();
-    } catch (err) {
-      console.error("[lead feed] setup failed:", err);
-    }
-  }
-
-  private removePendingLead(id: string) {
-    this.pendingLeads.delete(id);
-    const line = this.leadHudLines.get(id);
-    if (line) {
-      line.destroy();
-      this.leadHudLines.delete(id);
-    }
-    // Force a redraw on the next update tick instead of waiting up to a
-    // second for the throttled refresh.
-    this.leadHudLastRefresh = 0;
-  }
-
-  private handleNewLead(lead: LeadRow) {
-    if (this.pendingLeads.has(lead.id)) return; // de-dupe
-    this.pendingLeads.set(lead.id, lead);
-
-    // Visual: red pulse on the Lead Board station, 3 bumps over ~600ms.
+  private pulseLeadStation(color: number) {
+    // Visual: colored pulse on the Lead Board station, 3 bumps over ~600ms.
+    // Red = new lead landed; orange = a claimed lead opened up for stealing.
     const leadStation = this.stations.find((s) => s.data.type === "leads");
-    if (leadStation) {
-      const circle = leadStation.circle;
-      circle.setFillStyle(0xef4444, 1);
-      this.tweens.add({
-        targets: circle,
-        scale: 1.3,
-        duration: 100,
-        ease: "Quad.easeOut",
-        yoyo: true,
-        repeat: 2,
-        onComplete: () => {
-          circle.setFillStyle(STATION_COLORS[leadStation.data.type], 0.95);
-        },
-      });
-    }
-
-    // Fan the event out to the UI scene (toast + beep live there).
-    this.game.events.emit("lead:new", lead);
+    if (!leadStation) return;
+    const circle = leadStation.circle;
+    circle.setFillStyle(color, 1);
+    this.tweens.add({
+      targets: circle,
+      scale: 1.3,
+      duration: 100,
+      ease: "Quad.easeOut",
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => {
+        circle.setFillStyle(STATION_COLORS[leadStation.data.type], 0.95);
+      },
+    });
+    // Force a HUD redraw on the next tick so the new lead shows immediately.
+    this.leadHudLastRefresh = 0;
   }
 
   private updateLeadHud(timeMs: number) {
@@ -368,28 +292,25 @@ export class MainScene extends Phaser.Scene {
     this.leadHudLastRefresh = timeMs;
     if (!this.leadHud) return;
 
-    this.leadHudHeader.setText(`Leads pendientes: ${this.pendingLeads.size}`);
+    const { pendingLeads, stealableLeads } = gameStore.getState();
 
-    // Drop any line whose lead is no longer pending (Phase 3 will claim
-    // leads which removes them from the map).
+    const headerParts = [`Leads pendientes: ${pendingLeads.size}`];
+    if (stealableLeads.size > 0) {
+      headerParts.push(`😈 ${stealableLeads.size} para robar`);
+    }
+    this.leadHudHeader.setText(headerParts.join("   "));
+
+    // Drop any line whose lead left both live collections (claimed, stolen,
+    // or saved — the store mirrors Realtime either way).
     for (const [id, lineText] of this.leadHudLines) {
-      if (!this.pendingLeads.has(id)) {
+      if (!pendingLeads.has(id) && !stealableLeads.has(id)) {
         lineText.destroy();
         this.leadHudLines.delete(id);
       }
     }
 
-    // Create or update a line per pending lead. Sorted by oldest first so
-    // the most urgent (closest to ungrabbed) sits at the top of the list.
-    const now = Date.now();
-    const sorted = [...this.pendingLeads.values()].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-
-    let y = 4;
-    for (const lead of sorted) {
-      let line = this.leadHudLines.get(lead.id);
+    const ensureLine = (id: string) => {
+      let line = this.leadHudLines.get(id);
       if (!line) {
         line = this.add
           .text(0, 0, "", {
@@ -401,8 +322,22 @@ export class MainScene extends Phaser.Scene {
           })
           .setOrigin(0.5, 0);
         this.leadHud.add(line);
-        this.leadHudLines.set(lead.id, line);
+        this.leadHudLines.set(id, line);
       }
+      return line;
+    };
+
+    const now = Date.now();
+    let y = 4;
+
+    // Pending leads first, oldest first so the most urgent (closest to
+    // ungrabbed) sits at the top of the list.
+    const sortedPending = [...pendingLeads.values()].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    for (const lead of sortedPending) {
+      const line = ensureLine(lead.id);
 
       const createdAt = new Date(lead.created_at).getTime();
       const msLeft = createdAt + LEAD_CLAIM_WINDOW_MS - now;
@@ -427,6 +362,21 @@ export class MainScene extends Phaser.Scene {
       line.setY(y);
       y += 14;
     }
+
+    // Stealable leads below, oldest claim first (most steal-urgent). Orange
+    // — the same accent as the steal pulse/toasts.
+    const sortedStealable = [...stealableLeads.values()].sort(
+      (a, b) =>
+        new Date(a.claimed_at ?? a.created_at).getTime() -
+        new Date(b.claimed_at ?? b.created_at).getTime()
+    );
+    for (const lead of sortedStealable) {
+      const line = ensureLine(lead.id);
+      line.setColor("#f97316");
+      line.setText(`😈 STEAL: ${formatSourceLabel(lead.source)}`);
+      line.setY(y);
+      y += 14;
+    }
   }
 
   private tryInteract() {
@@ -440,11 +390,12 @@ export class MainScene extends Phaser.Scene {
     const station = this.activeStation;
     this.flashStation(station);
 
-    // The Lead Board claims the oldest pending lead instead of awarding a
-    // flat station_leads XP. The Computer Desk opens the React Email
-    // Composer (real send via Resend) instead of awarding station_computer
-    // XP. The remaining two stations (phone, photo) keep their existing
-    // station:interact flow so casual activity still counts.
+    // The Lead Board claims the oldest pending lead. The Computer Desk
+    // opens the React Email Composer (real send via Resend). Phone/Photo
+    // are placeholders until their real integrations (Twilio / video) land:
+    // they explicitly do NOT award XP or count activities — XP is only for
+    // server-verified real work, otherwise the daily counter (and the
+    // manager's trust in it) is fiction.
     if (station.data.type === "leads") {
       void this.handleClaimAttempt();
       return;
@@ -453,13 +404,14 @@ export class MainScene extends Phaser.Scene {
       // Pause the game so SPACE/arrow keys do not leak into other stations
       // while the modal is open. GameCanvas resumes on close.
       this.scene.pause();
-      this.game.events.emit("open:email-composer");
+      gameStore.getState().setEmailComposerOpen(true);
       return;
     }
 
-    this.game.events.emit("station:interact", {
-      station: station.data,
-      xp: station.data.xpReward,
+    gameStore.getState().pushToast({
+      message: `${station.data.icon} ${station.data.label} — coming soon`,
+      accent: "#9ca3af",
+      durationMs: PLACEHOLDER_TOAST_DURATION_MS,
     });
   }
 
@@ -479,21 +431,41 @@ export class MainScene extends Phaser.Scene {
   }
 
   private async handleClaimAttempt() {
+    const store = gameStore.getState();
     try {
       const result = await claimNextLead();
       if (!result.ok) {
         if (result.reason === "no_leads") {
-          this.game.events.emit("lead:none");
+          store.pushToast({
+            message: "No leads available right now",
+            accent: "#9ca3af",
+            durationMs: NONE_TOAST_DURATION_MS,
+          });
         } else {
           console.error("[claim] failed:", result);
         }
         return;
       }
-      // Optimistically drop the lead from the in-memory feed; the Realtime
-      // UPDATE event would do this too but it can lag by 100-300ms and the
+
+      // Optimistically drop the lead from the store; the Realtime UPDATE
+      // event would do this too but it can lag by 100-300ms and the
       // toast/HUD look snappier when we remove it now.
-      this.removePendingLead(result.leadId);
-      this.game.events.emit("lead:claimed", result);
+      store.removePendingLead(result.leadId);
+      store.setXp(result.newTotalXP);
+      store.bumpDaily(1);
+
+      const style = CLAIM_STYLES[result.eventType] ?? CLAIM_STYLES.lead_claimed_ontime!;
+      store.pushToast({
+        message: `${style.label}  +${result.xpEarned} XP`,
+        accent: style.accent,
+        durationMs: CLAIM_TOAST_DURATION_MS,
+      });
+
+      // Background-sync the daily breakdown so the optimistic bump stays
+      // honest with the server's count.
+      void getTodayActivities()
+        .then((summary) => gameStore.getState().setDaily(summary))
+        .catch((err) => console.error("[claim] daily refresh failed:", err));
     } catch (err) {
       console.error("[claim] threw:", err);
     }

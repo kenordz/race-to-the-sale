@@ -68,12 +68,12 @@ export default function EmailComposerModal({ open, onClose, onSent }: Props) {
   }, [open, onClose]);
 
   // Fetch leads each time the modal opens — content is freshly relevant.
+  // State resets are handled by the parent remounting us via `key` on each
+  // open/close flip (see GameCanvas), so initial useState values apply and
+  // this effect only does the async fetch.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setStage("loading");
-    setErrorMsg(null);
-    setSentRecipient(null);
     void (async () => {
       try {
         const rows = await getMyClaimedLeads();
@@ -193,7 +193,7 @@ export default function EmailComposerModal({ open, onClose, onSent }: Props) {
             </p>
             <p className="mt-1 text-sm text-emerald-200/80">
               +{15} XP. The send is logged in lead_communications and the
-              lead status was bumped to "contacted".
+              lead status was bumped to &ldquo;contacted&rdquo;.
             </p>
             <button
               type="button"
@@ -308,7 +308,7 @@ function ComposeBody(props: {
       <div className="flex items-center justify-between pt-2">
         <p className="text-[11px] text-white/40">
           Prototype mode: outbound goes to EMAIL_TEST_RECIPIENT, not the
-          customer's address.
+          customer&rsquo;s address.
         </p>
         <button
           type="button"

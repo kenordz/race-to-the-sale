@@ -1,8 +1,20 @@
-// Single source of truth for XP awards. The same event types live in the
-// CHECK constraint on xp_events.event_type — keep them in sync when you add
-// or rename a type.
-
-import type { StationType } from "@/lib/game/stations";
+// Single source of truth for XP awards on the client/server-action side.
+//
+// Design rule: every event type here corresponds to VERIFIED real work —
+// a lead claim (atomic, server-timed) or an outbound communication that
+// actually shipped. There are deliberately no "I pressed SPACE at a
+// station" events: placeholder stations award nothing until their real
+// integrations (Twilio SMS/voice, video) land, so the daily activity
+// counter never contains fiction.
+//
+// The claim tier values (75/50/30/15/5) also live in the
+// claim_next_lead stored procedure — keep them in sync until point
+// values move into a per-dealership config table (planned: resurrect
+// point_configs).
+//
+// The xp_events.event_type CHECK constraint still accepts legacy
+// station_* rows recorded before this cleanup; they are read (and bucketed
+// by getTodayActivities) but never written anymore.
 
 export type EventType =
   | "lead_claimed_lightning"
@@ -10,10 +22,7 @@ export type EventType =
   | "lead_claimed_ontime"
   | "lead_claimed_late"
   | "lead_claimed_stale"
-  | "station_phone"
-  | "station_computer"
-  | "station_photo"
-  | "station_leads"
+  | "lead_stolen"
   | "email_sent";
 
 export const XP_PER_EVENT: Record<EventType, number> = {
@@ -22,18 +31,11 @@ export const XP_PER_EVENT: Record<EventType, number> = {
   lead_claimed_ontime: 30,
   lead_claimed_late: 15,
   lead_claimed_stale: 5,
-  station_phone: 10,
-  station_computer: 5,
-  station_photo: 5,
-  station_leads: 20,
-  // Higher than station_computer because this is real outbound work (a
-  // real email is sent, not just a counter bump).
+  // Stealing an unworked teammate lead (20-min rule). Flat value: the
+  // created_at response clock already ran out, so time-tiering would always
+  // hit the stale floor. Sits between fast (50) and ontime (30) — hustle
+  // pays, but less than answering your own leads on time.
+  lead_stolen: 40,
+  // Real outbound work — an actual email is sent, not just a counter bump.
   email_sent: 15,
-};
-
-export const STATION_TO_EVENT: Record<StationType, EventType> = {
-  phone: "station_phone",
-  computer: "station_computer",
-  photo: "station_photo",
-  leads: "station_leads",
 };

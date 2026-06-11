@@ -46,28 +46,13 @@ export async function getCurrentXP(): Promise<number> {
   return (data ?? []).reduce((sum, row) => sum + row.xp_amount, 0);
 }
 
-export async function awardXP(args: {
-  eventType: EventType;
-  leadId?: string | null;
-}): Promise<number> {
-  const supabase = await createClient();
-  const userId = await getAuthedUserId();
-  const xpAmount = XP_PER_EVENT[args.eventType];
-
-  const { error } = await supabase.from("xp_events").insert({
-    profile_id: userId,
-    event_type: args.eventType,
-    xp_amount: xpAmount,
-    lead_id: args.leadId ?? null,
-  });
-
-  if (error) throw new Error(`awardXP: ${error.message}`);
-
-  // Re-sum in the same request so the caller can update the HUD without a
-  // second roundtrip. Two queries for now — fine at our volume; revisit if
-  // it ever hot-paths.
-  return getCurrentXP();
-}
+// NOTE: there is intentionally no client-callable awardXP action anymore.
+// XP is only written by code paths that VERIFY the underlying work happened:
+// the claim_next_lead stored procedure (response-time-tiered claim XP) and
+// sendLeadEmail below (a real email left the building). A generic
+// "insert whatever event_type the client sends" action let anyone farm XP
+// and fake daily activity counts from devtools — which poisons the exact
+// accountability data the product sells to managers.
 
 export async function getMyDealershipId(): Promise<string | null> {
   const supabase = await createClient();
@@ -94,7 +79,24 @@ export async function getPendingLeads(): Promise<LeadRow[]> {
   return (data ?? []) as LeadRow[];
 }
 
-export async function generateMockLead(): Promise<LeadRow> {
+export async function getStealableLeads(): Promise<LeadRow[]> {
+  const supabase = await createClient();
+  // Leads whose owner sat on them past the 20-min playbook window (flipped
+  // by release_stale_claims). Oldest claim first = most steal-urgent.
+  const { data, error } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("status", "stealable")
+    .order("claimed_at", { ascending: true });
+  if (error) throw new Error(`getStealableLeads: ${error.message}`);
+  return (data ?? []) as LeadRow[];
+}
+
+export async function generateMockLead(
+  // Optional: the demo control panel injects leads with a chosen source so
+  // Sergio can narrate ("watch — a CarGurus lead just came in").
+  sourceOverride?: (typeof MOCK_LEAD_SOURCES)[number]
+): Promise<LeadRow> {
   const supabase = await createClient();
   const userId = await getAuthedUserId();
 
@@ -112,7 +114,7 @@ export async function generateMockLead(): Promise<LeadRow> {
     throw new Error("generateMockLead: user has no dealership assigned");
   }
 
-  const source = pickRandom(MOCK_LEAD_SOURCES);
+  const source = sourceOverride ?? pickRandom(MOCK_LEAD_SOURCES);
   const customer_name = pickRandom(MOCK_CUSTOMER_NAMES);
   const vehicle_interest = pickRandom(MOCK_VEHICLE_INTERESTS);
   const customer_email = mockEmailFor(customer_name);
@@ -382,9 +384,10 @@ export async function sendLeadEmail(args: {
     return { ok: false, reason: "send_failed", message: `xp log failed: ${xpErr.message}` };
   }
 
-  // A first email graduates the lead from claimed → contacted. Subsequent
-  // emails on the same lead do nothing here.
-  if (lead.status === "claimed") {
+  // A first email graduates the lead from claimed → contacted. It also
+  // SAVES a stealable lead: communicating is the proof of work that takes
+  // it off the steal board before a teammate grabs it.
+  if (lead.status === "claimed" || lead.status === "stealable") {
     await supabase.from("leads").update({ status: "contacted" }).eq("id", lead.id);
   }
 

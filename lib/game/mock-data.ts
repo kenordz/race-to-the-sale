@@ -2,13 +2,17 @@
 // DriveCentric (ADF/XML feed). For now we hard-code a small pool so the
 // demo feels populated without leaning on a third-party integration.
 
+// All values must exist in the leads.source CHECK constraint.
+// third_party = CarGurus/AutoTrader etc., a top source in Sergio's playbook.
 export const MOCK_LEAD_SOURCES = [
   "website",
+  "third_party",
   "phone_up",
   "walk_in",
   "text",
   "chat",
   "social",
+  "referral",
 ] as const;
 
 export type MockLeadSource = (typeof MOCK_LEAD_SOURCES)[number];

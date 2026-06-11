@@ -1,13 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type Phaser from "phaser";
 import { GAME_HEIGHT, GAME_WIDTH } from "@/lib/game/scenes/MainScene";
 import {
   generateMockLead,
+  getCurrentXP,
+  getTodayActivities,
   type SendEmailResult,
 } from "@/app/play/actions";
+import { gameStore, useGameStore } from "@/lib/game/store";
+import { startLeadFeed } from "@/lib/game/lead-feed";
+import { XP_PER_EVENT } from "@/lib/game/xp-events";
 import EmailComposerModal from "@/components/EmailComposerModal";
+import HudOverlay from "@/components/hud/HudOverlay";
 
 // Random delay in milliseconds for the next mock lead. Range tuned so the
 // demo feels lively but not spammy — 30-90s.
@@ -20,8 +26,9 @@ const pickNextDelay = () =>
 export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-  const [emailOpen, setEmailOpen] = useState(false);
+  const emailOpen = useGameStore((s) => s.emailComposerOpen);
 
+  // ─── Phaser boot ───────────────────────────────────────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!containerRef.current) return;
@@ -30,12 +37,10 @@ export default function GameCanvas() {
     let cancelled = false;
 
     (async () => {
-      const [{ default: PhaserLib }, { MainScene }, { UIScene }] =
-        await Promise.all([
-          import("phaser"),
-          import("@/lib/game/scenes/MainScene"),
-          import("@/lib/game/scenes/UIScene"),
-        ]);
+      const [{ default: PhaserLib }, { MainScene }] = await Promise.all([
+        import("phaser"),
+        import("@/lib/game/scenes/MainScene"),
+      ]);
 
       if (cancelled || !containerRef.current) return;
 
@@ -51,7 +56,7 @@ export default function GameCanvas() {
         },
         pixelArt: true,
         roundPixels: true,
-        scene: [MainScene, UIScene],
+        scene: [MainScene],
         scale: {
           mode: PhaserLib.Scale.FIT,
           autoCenter: PhaserLib.Scale.CENTER_BOTH,
@@ -62,13 +67,6 @@ export default function GameCanvas() {
         (window as unknown as { __phaserGame?: Phaser.Game }).__phaserGame =
           gameRef.current;
       }
-      // Bridge: MainScene emits "open:email-composer" when the player
-      // SPACE's on the Computer Desk. React owns the modal; Phaser is
-      // paused while it's up to avoid bleeding keystrokes into other
-      // stations.
-      gameRef.current.events.on("open:email-composer", () => {
-        setEmailOpen(true);
-      });
     })();
 
     return () => {
@@ -78,10 +76,27 @@ export default function GameCanvas() {
     };
   }, []);
 
-  // Mock lead generator. This is a stand-in for the DriveCentric ADF feed
-  // that will drive production. Lives on the client because each user's
-  // browser independently triggers leads for demo purposes; in production
-  // the server (or an edge function on a cron) would own this.
+  // ─── Store hydration + lead feed ──────────────────────────────────────
+  // The Realtime subscription lives in lead-feed.ts and writes straight to
+  // the store; Phaser and the React HUD both just render store state.
+  useEffect(() => {
+    const feed = startLeadFeed();
+
+    void getCurrentXP()
+      .then((total) => gameStore.getState().setXp(total))
+      .catch((err) => console.error("[hud] initial XP load failed:", err));
+    void getTodayActivities()
+      .then((summary) => gameStore.getState().setDaily(summary))
+      .catch((err) => console.error("[hud] initial daily load failed:", err));
+
+    return () => feed.stop();
+  }, []);
+
+  // ─── Mock lead generator ──────────────────────────────────────────────
+  // Stand-in for the DriveCentric ADF feed that will drive production.
+  // Lives on the client because each user's browser independently triggers
+  // leads for demo purposes; in production the server (or an edge function
+  // on a cron) would own this.
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
@@ -110,7 +125,7 @@ export default function GameCanvas() {
   }, []);
 
   const closeEmail = useCallback(() => {
-    setEmailOpen(false);
+    gameStore.getState().setEmailComposerOpen(false);
     // Resume the Phaser scene so input + animations pick back up.
     const game = gameRef.current;
     if (game) {
@@ -121,22 +136,38 @@ export default function GameCanvas() {
 
   const onEmailSent = useCallback(
     (result: Extract<SendEmailResult, { ok: true }>) => {
-      // Hand the new XP total back into the UIScene so the HUD picks up
-      // immediately without a getCurrentXP roundtrip.
-      const game = gameRef.current;
-      game?.events.emit("xp:set", { total: result.newTotalXP });
-      game?.events.emit("email:sent-toast", { recipient: result.recipient });
+      const store = gameStore.getState();
+      store.setXp(result.newTotalXP);
+      store.bumpDaily(1);
+      // The +XP toast is implied by the XP counter jumping; the toast slot
+      // confirms where the email actually went, which matters for the demo
+      // ("look, it went to YOUR inbox, not a fake one").
+      store.pushToast({
+        message: `✉️  Email sent to ${result.recipient}  +${XP_PER_EVENT.email_sent} XP`,
+        accent: "#10b981",
+        durationMs: 2500,
+      });
+      void getTodayActivities()
+        .then((summary) => gameStore.getState().setDaily(summary))
+        .catch(() => {});
     },
     []
   );
 
   return (
     <>
-      <div
-        ref={containerRef}
-        className="aspect-video w-full max-w-[1280px] overflow-hidden rounded-xl border border-white/10 shadow-2xl"
-      />
+      <div className="relative w-full max-w-[1280px]">
+        <div
+          ref={containerRef}
+          className="aspect-video w-full overflow-hidden rounded-xl border border-white/10 shadow-2xl"
+        />
+        <HudOverlay />
+      </div>
+      {/* key remounts the modal on every open/close flip so its internal
+          stage/error state resets via useState initials (avoids setState-
+          in-effect reset patterns). */}
       <EmailComposerModal
+        key={emailOpen ? "email-open" : "email-closed"}
         open={emailOpen}
         onClose={closeEmail}
         onSent={onEmailSent}
