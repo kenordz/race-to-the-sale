@@ -52,6 +52,9 @@ export function startLeadFeed(): LeadFeedHandle {
         data: { user },
       } = await supabaseClient.auth.getUser();
       const myUserId = user?.id ?? null;
+      // Share it with the store so UI (leaderboard highlight, My Leads) can
+      // tell "me" apart without an extra auth round trip.
+      gameStore.getState().setMyProfileId(myUserId);
 
       const dealershipId = await getMyDealershipId();
       if (!dealershipId) {

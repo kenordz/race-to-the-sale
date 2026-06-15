@@ -75,6 +75,21 @@ export async function forceStealCheck(): Promise<DemoActionResult> {
   }
 }
 
+export async function seedDemoDay(): Promise<DemoActionResult> {
+  try {
+    await assertManager();
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("seed_demo_day");
+    if (error) throw new Error(error.message);
+    return {
+      ok: true,
+      detail: `${(data as number) ?? 0} leads sembrados: floor con vida (nuevos, urgentes, claims, citas, venta)`,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function resetDemoDay(): Promise<DemoActionResult> {
   try {
     await assertManager();

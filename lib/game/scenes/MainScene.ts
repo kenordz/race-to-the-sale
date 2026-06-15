@@ -222,6 +222,16 @@ export class MainScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.SPACE
     );
     this.spaceKey.on("down", this.tryInteract, this);
+
+    // M opens the My Leads panel (React modal) from anywhere on the floor —
+    // managing your book of business shouldn't require walking. Pausing the
+    // scene keeps keys from leaking; GameCanvas resumes on close.
+    const mKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+    mKey.on("down", () => {
+      this.scene.pause();
+      gameStore.getState().setMyLeadsOpen(true);
+    });
+
     this.player.anims.play(`idle-${this.facing}`);
 
     // ─── Store wiring ────────────────────────────────────────────────────

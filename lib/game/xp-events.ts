@@ -23,6 +23,8 @@ export type EventType =
   | "lead_claimed_late"
   | "lead_claimed_stale"
   | "lead_stolen"
+  | "appointment_set"
+  | "lead_sold"
   | "email_sent";
 
 export const XP_PER_EVENT: Record<EventType, number> = {
@@ -36,6 +38,11 @@ export const XP_PER_EVENT: Record<EventType, number> = {
   // hit the stale floor. Sits between fast (50) and ontime (30) — hustle
   // pays, but less than answering your own leads on time.
   lead_stolen: 40,
+  // The playbook's gold metric (2+ per rep per day). Self-reported, but
+  // public on the leaderboard and inspected daily by managers.
+  appointment_set: 60,
+  // The point of the whole exercise.
+  lead_sold: 150,
   // Real outbound work — an actual email is sent, not just a counter bump.
   email_sent: 15,
 };

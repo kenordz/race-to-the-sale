@@ -42,12 +42,30 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      <Link
-        href="/play"
-        className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-white/90"
-      >
-        Enter the Office →
-      </Link>
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <Link
+          href="/play"
+          className="rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-white/90"
+        >
+          Enter the Office →
+        </Link>
+        {(profile?.role === "manager" || profile?.role === "admin") && (
+          <>
+            <Link
+              href="/manager"
+              className="rounded-md border border-white/20 bg-white/5 px-5 py-2.5 text-sm transition hover:bg-white/10"
+            >
+              📊 Manager Dashboard
+            </Link>
+            <Link
+              href="/demo"
+              className="rounded-md border border-white/20 bg-white/5 px-5 py-2.5 text-sm transition hover:bg-white/10"
+            >
+              🎬 Demo Director
+            </Link>
+          </>
+        )}
+      </div>
 
       <form action={signOut}>
         <button className="rounded-md border border-white/20 bg-white/5 px-4 py-2 text-sm transition hover:bg-white/10">

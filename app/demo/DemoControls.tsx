@@ -5,6 +5,7 @@ import {
   forceStealCheck,
   injectDemoLead,
   resetDemoDay,
+  seedDemoDay,
   type DemoActionResult,
   type DemoSource,
 } from "./actions";
@@ -68,6 +69,17 @@ export default function DemoControls() {
         >
           🎲 Lead aleatorio
         </button>
+        <button
+          disabled={busy}
+          onClick={() => run(seedDemoDay)}
+          className="mt-2 w-full rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-4 text-sm font-semibold text-emerald-300 transition active:scale-95 disabled:opacity-40"
+        >
+          🌱 Sembrar día de demo (floor con vida)
+        </button>
+        <p className="mt-1.5 text-xs text-white/35">
+          11 leads realistas: nuevos, urgentes, claims (uno a punto de ser
+          robable), citas y una venta. Re-ejecutar limpia el seed anterior.
+        </p>
       </section>
 
       {/* ── Steal ───────────────────────────────────────────────────── */}

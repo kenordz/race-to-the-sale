@@ -15,7 +15,11 @@
 // same state without touching Phaser.
 
 import { createStore, useStore } from "zustand";
-import type { LeadRow, TodayActivitySummary } from "@/app/play/actions";
+import type {
+  LeadRow,
+  LeaderboardRow,
+  TodayActivitySummary,
+} from "@/app/play/actions";
 
 export type Toast = {
   id: number;
@@ -26,6 +30,10 @@ export type Toast = {
 };
 
 export type GameState = {
+  // ── Identity ──────────────────────────────────────────────────────────
+  /** The signed-in user's profile id (set by the lead feed on boot). */
+  myProfileId: string | null;
+
   // ── XP ────────────────────────────────────────────────────────────────
   /** Authoritative lifetime XP total (server-confirmed). */
   xp: number;
@@ -43,9 +51,14 @@ export type GameState = {
    */
   stealableLeads: Map<string, LeadRow>;
 
+  // ── Leaderboard ───────────────────────────────────────────────────────
+  /** Today's dealership standings, ordered by XP today. */
+  leaderboard: LeaderboardRow[];
+
   // ── UI ────────────────────────────────────────────────────────────────
   toasts: Toast[];
   emailComposerOpen: boolean;
+  myLeadsOpen: boolean;
 
   // ── Actions ───────────────────────────────────────────────────────────
   setXp: (total: number) => void;
@@ -57,21 +70,27 @@ export type GameState = {
   upsertStealableLead: (lead: LeadRow) => void;
   removeStealableLead: (id: string) => void;
   hydrateStealableLeads: (leads: LeadRow[]) => void;
+  setMyProfileId: (id: string | null) => void;
+  setLeaderboard: (rows: LeaderboardRow[]) => void;
   pushToast: (toast: Omit<Toast, "id">) => void;
   dismissToast: (id: number) => void;
   setEmailComposerOpen: (open: boolean) => void;
+  setMyLeadsOpen: (open: boolean) => void;
 };
 
 let toastSeq = 0;
 
 export const gameStore = createStore<GameState>()((set) => ({
+  myProfileId: null,
   xp: 0,
   dailyTotal: 0,
   dailyTarget: 90,
   pendingLeads: new Map(),
   stealableLeads: new Map(),
+  leaderboard: [],
   toasts: [],
   emailComposerOpen: false,
+  myLeadsOpen: false,
 
   setXp: (total) => set({ xp: total }),
 
@@ -127,6 +146,12 @@ export const gameStore = createStore<GameState>()((set) => ({
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   setEmailComposerOpen: (open) => set({ emailComposerOpen: open }),
+
+  setMyLeadsOpen: (open) => set({ myLeadsOpen: open }),
+
+  setMyProfileId: (id) => set({ myProfileId: id }),
+
+  setLeaderboard: (rows) => set({ leaderboard: rows }),
 }));
 
 /** React hook — `const xp = useGameStore((s) => s.xp)` */

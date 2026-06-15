@@ -13,7 +13,9 @@ import { gameStore, useGameStore } from "@/lib/game/store";
 import { startLeadFeed } from "@/lib/game/lead-feed";
 import { XP_PER_EVENT } from "@/lib/game/xp-events";
 import EmailComposerModal from "@/components/EmailComposerModal";
+import MyLeadsModal from "@/components/MyLeadsModal";
 import HudOverlay from "@/components/hud/HudOverlay";
+import TutorialOverlay from "@/components/TutorialOverlay";
 
 // Random delay in milliseconds for the next mock lead. Range tuned so the
 // demo feels lively but not spammy — 30-90s.
@@ -27,6 +29,7 @@ export default function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const emailOpen = useGameStore((s) => s.emailComposerOpen);
+  const myLeadsOpen = useGameStore((s) => s.myLeadsOpen);
 
   // ─── Phaser boot ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -124,15 +127,23 @@ export default function GameCanvas() {
     };
   }, []);
 
-  const closeEmail = useCallback(() => {
-    gameStore.getState().setEmailComposerOpen(false);
-    // Resume the Phaser scene so input + animations pick back up.
+  const resumeScene = useCallback(() => {
     const game = gameRef.current;
     if (game) {
       const main = game.scene.getScene("MainScene");
       if (main && main.scene.isPaused()) main.scene.resume();
     }
   }, []);
+
+  const closeEmail = useCallback(() => {
+    gameStore.getState().setEmailComposerOpen(false);
+    resumeScene();
+  }, [resumeScene]);
+
+  const closeMyLeads = useCallback(() => {
+    gameStore.getState().setMyLeadsOpen(false);
+    resumeScene();
+  }, [resumeScene]);
 
   const onEmailSent = useCallback(
     (result: Extract<SendEmailResult, { ok: true }>) => {
@@ -162,6 +173,7 @@ export default function GameCanvas() {
           className="aspect-video w-full overflow-hidden rounded-xl border border-white/10 shadow-2xl"
         />
         <HudOverlay />
+        <TutorialOverlay />
       </div>
       {/* key remounts the modal on every open/close flip so its internal
           stage/error state resets via useState initials (avoids setState-
@@ -171,6 +183,11 @@ export default function GameCanvas() {
         open={emailOpen}
         onClose={closeEmail}
         onSent={onEmailSent}
+      />
+      <MyLeadsModal
+        key={myLeadsOpen ? "leads-open" : "leads-closed"}
+        open={myLeadsOpen}
+        onClose={closeMyLeads}
       />
     </>
   );

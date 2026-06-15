@@ -234,6 +234,111 @@ export async function getTodayActivities(): Promise<TodayActivitySummary> {
   return summary;
 }
 
+export type LeaderboardRow = {
+  profile_id: string;
+  full_name: string;
+  xp_today: number;
+  xp_total: number;
+  appointments_today: number;
+  sales_today: number;
+};
+
+export async function getLeaderboard(): Promise<LeaderboardRow[]> {
+  const supabase = await createClient();
+  await getAuthedUserId();
+  // Single round trip via SQL function: today's XP, lifetime XP,
+  // appointments and sales per teammate, ordered by today's XP.
+  const { data, error } = await supabase.rpc("get_leaderboard");
+  if (error) throw new Error(`getLeaderboard: ${error.message}`);
+  return (data ?? []) as LeaderboardRow[];
+}
+
+export type LeadOutcome = "appointment_set" | "sold";
+
+export type MarkOutcomeResult =
+  | {
+      ok: true;
+      leadId: string;
+      newStatus: string;
+      eventType: EventType;
+      xpEarned: number;
+      newTotalXP: number;
+    }
+  | {
+      ok: false;
+      reason:
+        | "not_your_lead"
+        | "invalid_transition"
+        | "outcome_already_awarded"
+        | "lead_not_found"
+        | "unknown";
+      message?: string;
+    };
+
+export async function markLeadOutcome(args: {
+  leadId: string;
+  outcome: LeadOutcome;
+}): Promise<MarkOutcomeResult> {
+  const supabase = await createClient();
+  await getAuthedUserId();
+
+  // SECURITY DEFINER function validates ownership + transition and writes
+  // status + XP in one transaction (no double-award possible).
+  const { data, error } = await supabase
+    .rpc("mark_lead_outcome", {
+      p_lead_id: args.leadId,
+      p_outcome: args.outcome,
+    })
+    .single();
+
+  if (error) {
+    const known = [
+      "not_your_lead",
+      "invalid_transition",
+      "outcome_already_awarded",
+      "lead_not_found",
+    ] as const;
+    const reason = known.find((k) => error.message.includes(k));
+    return reason
+      ? { ok: false, reason }
+      : { ok: false, reason: "unknown", message: error.message };
+  }
+
+  type OutcomeRow = {
+    lead_id: string;
+    new_status: string;
+    event_type: EventType;
+    xp_earned: number;
+    new_total_xp: number;
+  };
+  const row = data as OutcomeRow;
+
+  return {
+    ok: true,
+    leadId: row.lead_id,
+    newStatus: row.new_status,
+    eventType: row.event_type,
+    xpEarned: row.xp_earned,
+    newTotalXP: row.new_total_xp,
+  };
+}
+
+export async function getMyActiveLeads(): Promise<LeadRow[]> {
+  const supabase = await createClient();
+  const userId = await getAuthedUserId();
+  // The My Leads panel: everything the rep currently owns and can still
+  // move through the funnel (claim → contact → cita → venta). 'stealable'
+  // included on purpose — those are the ones to save FIRST.
+  const { data, error } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("claimed_by", userId)
+    .in("status", ["claimed", "contacted", "stealable", "appointment_set"])
+    .order("claimed_at", { ascending: false });
+  if (error) throw new Error(`getMyActiveLeads: ${error.message}`);
+  return (data ?? []) as LeadRow[];
+}
+
 export async function getMyClaimedLeads(): Promise<LeadRow[]> {
   const supabase = await createClient();
   const userId = await getAuthedUserId();
