@@ -45,6 +45,22 @@ export default function DemoControls() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Live status strip — Sergio always knows if a tap registered. */}
+      <div
+        className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold uppercase tracking-wide transition ${
+          busy
+            ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+        }`}
+      >
+        <span
+          className={`h-2 w-2 rounded-full ${
+            busy ? "animate-pulse bg-amber-400" : "bg-emerald-400"
+          }`}
+        />
+        {busy ? "Procesando…" : "Listo"}
+      </div>
+
       {/* ── Inject lead ─────────────────────────────────────────────── */}
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/60">

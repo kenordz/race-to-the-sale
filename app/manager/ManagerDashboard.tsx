@@ -43,6 +43,17 @@ const FUNNEL_LABELS: Record<string, string> = {
   orphan: "Huérfanos",
 };
 
+const FUNNEL_COLORS: Record<string, string> = {
+  new: "#38bdf8",
+  claimed: "#6366f1",
+  stealable: "#fb7314",
+  contacted: "#10b981",
+  appointment_set: "#a78bfa",
+  sold: "#facc15",
+  dead: "#52525b",
+  orphan: "#52525b",
+};
+
 function fmtResponse(seconds: number | null): string {
   if (seconds === null) return "—";
   if (seconds < 60) return `${seconds}s`;
@@ -101,10 +112,55 @@ export default function ManagerDashboard() {
     return <p className="py-16 text-center text-white/40">Cargando…</p>;
   }
 
+  // ── Aggregate KPIs for the hero row (what the dealer reads first) ──────
+  const breaches = untouched.filter((l) => minutesWaiting(l.created_at) >= 5)
+    .length;
+  const totalAppointments = team.reduce((a, r) => a + r.appointments_today, 0);
+  const totalSales = team.reduce((a, r) => a + r.sales_today, 0);
+  const respValues = team
+    .map((r) => r.avg_response_seconds)
+    .filter((s): s is number => s !== null);
+  const avgResponse =
+    respValues.length > 0
+      ? Math.round(respValues.reduce((a, b) => a + b, 0) / respValues.length)
+      : null;
+
   return (
     <div className="flex flex-col gap-8">
+      {/* ── Hero KPIs: the dealer's first read ────────────────────────── */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <KpiCard
+          label="Leads sin tocar"
+          value={String(untouched.length)}
+          accent={breaches > 0 ? "#ef4444" : "#10b981"}
+          sub={breaches > 0 ? `${breaches} pasaron 5 min ⚠️` : "todo al día ✅"}
+          delay={0}
+        />
+        <KpiCard
+          label="Resp. promedio"
+          value={avgResponse === null ? "—" : fmtResponse(avgResponse)}
+          accent={avgResponse !== null && avgResponse > 300 ? "#ef4444" : "#facc15"}
+          sub="meta < 5 min"
+          delay={60}
+        />
+        <KpiCard
+          label="Citas hoy"
+          value={String(totalAppointments)}
+          accent="#a78bfa"
+          sub="📅 del equipo"
+          delay={120}
+        />
+        <KpiCard
+          label="Ventas hoy"
+          value={String(totalSales)}
+          accent="#facc15"
+          sub="🚗 del equipo"
+          delay={180}
+        />
+      </section>
+
       {/* ── Untouched leads: the fire ─────────────────────────────────── */}
-      <section>
+      <section className="animate-fade-in-up">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/60">
           🚨 Leads sin tocar ({untouched.length})
         </h2>
@@ -122,7 +178,7 @@ export default function ManagerDashboard() {
                   key={lead.id}
                   className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
                     breach
-                      ? "border-red-500/40 bg-red-500/10"
+                      ? "animate-urgent-pulse border-red-500/40 bg-red-500/10"
                       : "border-white/10 bg-white/[0.03]"
                   }`}
                 >
@@ -148,7 +204,7 @@ export default function ManagerDashboard() {
       </section>
 
       {/* ── Team table ────────────────────────────────────────────────── */}
-      <section>
+      <section className="animate-fade-in-up">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/60">
           Equipo · hoy
         </h2>
@@ -231,26 +287,40 @@ export default function ManagerDashboard() {
       </section>
 
       {/* ── Funnel snapshot ───────────────────────────────────────────── */}
-      <section>
+      <section className="animate-fade-in-up">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/60">
           Funnel actual
         </h2>
-        <div className="flex flex-wrap gap-2">
-          {FUNNEL_ORDER.map((status) => {
-            const row = funnel.find((f) => f.status === status);
-            const count = row?.count ?? 0;
-            return (
-              <div
-                key={status}
-                className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2.5 text-center"
-              >
-                <p className="font-mono text-xl">{count}</p>
-                <p className="mt-0.5 text-[11px] text-white/40">
-                  {FUNNEL_LABELS[status] ?? status}
-                </p>
-              </div>
+        <div className="flex flex-col gap-1.5">
+          {(() => {
+            const counts = FUNNEL_ORDER.map(
+              (status) => funnel.find((f) => f.status === status)?.count ?? 0
             );
-          })}
+            const max = Math.max(1, ...counts);
+            return FUNNEL_ORDER.map((status, i) => {
+              const count = counts[i];
+              const pct = Math.round((count / max) * 100);
+              return (
+                <div key={status} className="flex items-center gap-3">
+                  <span className="w-28 shrink-0 text-right text-xs text-white/55">
+                    {FUNNEL_LABELS[status] ?? status}
+                  </span>
+                  <div className="relative h-6 flex-1 overflow-hidden rounded bg-white/[0.04]">
+                    <div
+                      className="h-full rounded transition-all duration-700"
+                      style={{
+                        width: `${Math.max(pct, count > 0 ? 4 : 0)}%`,
+                        backgroundColor: FUNNEL_COLORS[status] ?? "#52525b",
+                      }}
+                    />
+                    <span className="absolute inset-y-0 left-2 flex items-center font-mono text-xs font-semibold text-white">
+                      {count}
+                    </span>
+                  </div>
+                </div>
+              );
+            });
+          })()}
         </div>
       </section>
 
@@ -259,6 +329,42 @@ export default function ManagerDashboard() {
           Actualizado {updatedAt.toLocaleTimeString()} · refresca cada 30s
         </p>
       )}
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  accent,
+  sub,
+  delay,
+}: {
+  label: string;
+  value: string;
+  accent: string;
+  sub: string;
+  delay: number;
+}) {
+  return (
+    <div
+      className="animate-kpi card-glass relative overflow-hidden rounded-xl px-4 py-3"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <span
+        className="absolute inset-x-0 top-0 h-0.5"
+        style={{ backgroundColor: accent }}
+      />
+      <p className="text-[11px] uppercase tracking-wide text-white/40">
+        {label}
+      </p>
+      <p
+        className="mt-1 font-mono text-3xl font-bold tabular-nums"
+        style={{ color: accent }}
+      >
+        {value}
+      </p>
+      <p className="mt-0.5 text-[11px] text-white/45">{sub}</p>
     </div>
   );
 }

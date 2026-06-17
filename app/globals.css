@@ -3,6 +3,14 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Race to the Sale brand palette (race / podium / urgency) */
+  --brand-gold: #facc15;
+  --brand-amber: #f59e0b;
+  --brand-orange: #fb7314;
+  --brand-red: #ef4444;
+  --brand-emerald: #10b981;
+  --brand-violet: #a78bfa;
 }
 
 @theme inline {
@@ -25,11 +33,27 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Keyframes
+   ───────────────────────────────────────────────────────────────────── */
+
 /* HUD toast entrance: slide down + fade, mirrors the old Phaser tween. */
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(-12px);
+    transform: translateY(-12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Sections / cards easing in on mount — gives the dashboards a premium feel. */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -37,6 +61,98 @@ body {
   }
 }
 
+/* Soft attention pulse for breached / urgent rows. */
+@keyframes urgent-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+  }
+}
+
+/* Gold glow for the player's own leaderboard row + winners. */
+@keyframes gold-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 6px 0 rgba(250, 204, 21, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 14px 2px rgba(250, 204, 21, 0.5);
+  }
+}
+
+/* Steal alarm: orange theatrical flash. */
+@keyframes steal-flash {
+  0%,
+  100% {
+    background-color: rgba(251, 115, 20, 0.1);
+  }
+  50% {
+    background-color: rgba(251, 115, 20, 0.3);
+  }
+}
+
+/* Number shimmer for hero KPIs. */
+@keyframes kpi-shimmer {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Utilities
+   ───────────────────────────────────────────────────────────────────── */
+
 @utility animate-toast-in {
-  animation: toast-in 180ms ease-out;
+  animation: toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@utility animate-fade-in-up {
+  animation: fade-in-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility animate-urgent-pulse {
+  animation: urgent-pulse 1.8s ease-in-out infinite;
+}
+
+@utility animate-gold-glow {
+  animation: gold-glow 2.4s ease-in-out infinite;
+}
+
+@utility animate-steal-flash {
+  animation: steal-flash 0.9s ease-in-out infinite;
+}
+
+@utility animate-kpi {
+  animation: kpi-shimmer 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Branded dark backdrop: deep racetrack vignette instead of flat black. */
+@utility bg-brand-arena {
+  background:
+    radial-gradient(
+      1200px 600px at 50% -10%,
+      rgba(250, 204, 21, 0.06),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 500px at 100% 110%,
+      rgba(251, 115, 20, 0.05),
+      transparent 55%
+    ),
+    #07070a;
+}
+
+/* Subtle glass card surface used across dashboards. */
+@utility card-glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(6px);
 }

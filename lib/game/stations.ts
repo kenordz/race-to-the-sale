@@ -8,7 +8,7 @@
 // proximity + SPACE. `placeholder: true` marks stations whose real
 // integration has not shipped yet — they show a "coming soon" toast.
 
-export type StationType = "phone" | "computer" | "photo" | "leads";
+export type StationType = "phone" | "computer" | "sms" | "leads";
 
 export type Station = {
   id: string;
@@ -24,7 +24,7 @@ export type Station = {
 export const STATION_COLORS: Record<StationType, number> = {
   phone: 0x22c55e, // green
   computer: 0x3b82f6, // blue
-  photo: 0xeab308, // yellow
+  sms: 0x06b6d4, // cyan
   leads: 0xa855f7, // purple
 };
 
@@ -50,15 +50,15 @@ export const STATIONS: ReadonlyArray<Station> = [
     label: "Computer Desk",
     icon: "💻",
   },
-  // Photo Station — bottom-left print/supply area; quiet corner.
-  // Placeholder; becomes the Video Booth.
+  // SMS Station — bottom-left corner; the texting desk.
+  // Placeholder until Twilio SMS lands (A2P 10DLC in progress).
   {
-    id: "photo-1",
-    type: "photo",
+    id: "sms-1",
+    type: "sms",
     x: 130,
     y: 455,
-    label: "Photo Station",
-    icon: "📸",
+    label: "SMS Station",
+    icon: "💬",
     placeholder: true,
   },
   // Lead Board — bottom-right meeting area near the wall poster, the spot

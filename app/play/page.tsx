@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import PlayClient from "./PlayClient";
@@ -12,18 +13,14 @@ export default async function PlayPage() {
   if (!user) redirect("/login");
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-4 bg-black px-4 py-8 text-white">
-      <div className="text-center">
-        <p className="text-sm uppercase tracking-widest text-white/40">
-          Race to the Sale
-        </p>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight">The Office</h1>
-        <p className="mt-1 text-xs text-white/40">
-          Move with arrow keys. More to come.
-        </p>
-      </div>
-
+    <main className="relative flex flex-1 bg-black text-white">
       <PlayClient />
+      <Link
+        href="/office"
+        className="absolute right-4 top-1/2 z-20 -translate-y-1/2 rounded-lg border border-amber-400/40 bg-black/70 px-3 py-2 font-mono text-xs text-amber-300 backdrop-blur transition hover:bg-black/90"
+      >
+        🎨 Oficina nueva →
+      </Link>
     </main>
   );
 }

@@ -43,12 +43,12 @@ export default async function ManagerPage() {
     .single();
 
   return (
-    <main className="min-h-screen bg-black px-4 py-8 text-white sm:px-8">
+    <main className="bg-brand-arena min-h-screen px-4 py-8 text-white sm:px-8">
       <div className="mx-auto max-w-5xl">
         <header className="mb-6 flex items-end justify-between">
           <div>
-            <p className="text-xs uppercase tracking-widest text-white/40">
-              Race to the Sale · Manager
+            <p className="text-xs uppercase tracking-widest text-amber-300/70">
+              🏁 Race to the Sale · Manager
             </p>
             <h1 className="mt-1 text-2xl font-bold">
               {dealership?.name ?? "Dealership"}

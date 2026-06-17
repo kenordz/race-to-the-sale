@@ -167,10 +167,10 @@ export default function GameCanvas() {
 
   return (
     <>
-      <div className="relative w-full max-w-[1280px]">
+      <div className="relative flex-1">
         <div
           ref={containerRef}
-          className="aspect-video w-full overflow-hidden rounded-xl border border-white/10 shadow-2xl"
+          className="h-full w-full overflow-hidden bg-[#1a1a1a]"
         />
         <HudOverlay />
         <TutorialOverlay />

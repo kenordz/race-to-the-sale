@@ -112,7 +112,7 @@ export default function MyLeadsModal({ open, onClose }: Props) {
         if (e.target === e.currentTarget && !busyLeadId) onClose();
       }}
     >
-      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-zinc-950 p-6 text-white shadow-2xl">
+      <div className="animate-fade-in-up flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-zinc-950 p-6 text-white shadow-2xl">
         <div className="mb-4 flex items-start justify-between">
           <div>
             <p className="text-xs uppercase tracking-widest text-white/40">

@@ -41,11 +41,11 @@ export default async function DemoPage() {
   }
 
   return (
-    <main className="min-h-screen bg-black px-4 py-8 text-white">
+    <main className="bg-brand-arena min-h-screen px-4 py-8 text-white">
       <div className="mx-auto flex max-w-md flex-col gap-6">
         <header>
-          <p className="text-xs uppercase tracking-widest text-white/40">
-            Race to the Sale
+          <p className="text-xs uppercase tracking-widest text-amber-300/70">
+            🏁 Race to the Sale
           </p>
           <h1 className="mt-1 text-2xl font-bold">🎬 Demo Director</h1>
           <p className="mt-1 text-sm text-white/50">

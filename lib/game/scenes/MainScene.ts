@@ -9,6 +9,7 @@ import {
 import { claimNextLead, getTodayActivities } from "@/app/play/actions";
 import { gameStore } from "@/lib/game/store";
 import { formatSourceLabel } from "@/lib/game/mock-data";
+import { NpcCrowd } from "@/lib/game/npc";
 import type { EventType } from "@/lib/game/xp-events";
 
 // MainScene is a RENDERER. It owns no game state: pending leads, XP and
@@ -95,6 +96,7 @@ export class MainScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private facing: Direction = "down";
   private minimap!: Phaser.Cameras.Scene2D.Camera;
+  private crowd?: NpcCrowd;
   private stations: StationView[] = [];
   private activeStation: StationView | null = null;
   private prompt!: Phaser.GameObjects.Container;
@@ -233,6 +235,21 @@ export class MainScene extends Phaser.Scene {
     });
 
     this.player.anims.play(`idle-${this.facing}`);
+
+    // ─── Ambient teammates ───────────────────────────────────────────────
+    // Fake "online" coworkers wandering the floor so the demo never looks
+    // empty. Cosmetic only — real multiplayer presence is a later build.
+    this.crowd = new NpcCrowd(this, {
+      textureKey: "character",
+      startFrame: frame(DIR_OFFSET.down, IDLE_ROW),
+      bounds: { x: 60, y: 150, w: WORLD_WIDTH - 120, h: WORLD_HEIGHT - 300 },
+      members: [
+        { name: "Carlos", tint: 0xff9b9b },
+        { name: "Marisol", tint: 0x9bd0ff },
+        { name: "Diego", tint: 0xffe39b },
+        { name: "Hannah", tint: 0xc7a3ff },
+      ],
+    });
 
     // ─── Store wiring ────────────────────────────────────────────────────
     // The lead feed (Realtime subscription) is owned by React (GameCanvas →
@@ -401,8 +418,8 @@ export class MainScene extends Phaser.Scene {
     this.flashStation(station);
 
     // The Lead Board claims the oldest pending lead. The Computer Desk
-    // opens the React Email Composer (real send via Resend). Phone/Photo
-    // are placeholders until their real integrations (Twilio / video) land:
+    // opens the React Email Composer (real send via Resend). Phone/SMS
+    // are placeholders until their real integrations (Twilio) land:
     // they explicitly do NOT award XP or count activities — XP is only for
     // server-verified real work, otherwise the daily counter (and the
     // manager's trust in it) is fiction.
@@ -581,8 +598,9 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  update(timeMs: number) {
+  update(timeMs: number, delta: number) {
     if (!this.player || !this.cursors) return;
+    this.crowd?.update(timeMs, delta);
     this.updateLeadHud(timeMs);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     let vx = 0;

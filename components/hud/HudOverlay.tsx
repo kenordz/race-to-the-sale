@@ -54,10 +54,13 @@ function LeaderboardPanel() {
 
   if (rows.length === 0) return null;
 
+  const medals = ["🥇", "🥈", "🥉"];
+
   return (
-    <div className="absolute bottom-4 left-4 w-60 rounded border border-white/30 bg-black/75 px-3 py-2 font-mono text-white">
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/50">
-        🏆 Leaderboard · hoy
+    <div className="card-glass animate-fade-in-up absolute bottom-4 left-4 w-64 rounded-xl px-3 py-2.5 font-mono text-white shadow-2xl">
+      <p className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-amber-300/80">
+        <span>🏆 Leaderboard</span>
+        <span className="text-white/30">hoy</span>
       </p>
       <ol className="flex flex-col gap-1">
         {rows.slice(0, 5).map((row, i) => {
@@ -65,11 +68,19 @@ function LeaderboardPanel() {
           return (
             <li
               key={row.profile_id}
-              className={`flex items-center gap-2 text-xs ${
-                isMe ? "text-amber-300" : "text-white/85"
+              className={`flex items-center gap-2 rounded-lg px-2 py-1 text-xs transition ${
+                isMe
+                  ? "animate-gold-glow bg-amber-400/15 font-semibold text-amber-200"
+                  : "text-white/85"
               }`}
             >
-              <span className="w-4 text-white/40">{i + 1}.</span>
+              <span className="w-5 text-center">
+                {i < 3 ? (
+                  medals[i]
+                ) : (
+                  <span className="text-white/40">{i + 1}</span>
+                )}
+              </span>
               <span className="flex-1 truncate">
                 {row.full_name}
                 {isMe ? " (tú)" : ""}
@@ -80,12 +91,16 @@ function LeaderboardPanel() {
               {row.sales_today > 0 && (
                 <span title="Ventas hoy">🚗{row.sales_today}</span>
               )}
-              <span className="tabular-nums">{row.xp_today}</span>
+              <span className="tabular-nums text-amber-300">
+                {row.xp_today}
+              </span>
             </li>
           );
         })}
       </ol>
-      <p className="mt-1.5 text-[10px] text-white/30">M = mis leads</p>
+      <p className="mt-2 border-t border-white/10 pt-1.5 text-center text-[10px] text-white/35">
+        Presiona <span className="text-white/60">M</span> para ver tus leads
+      </p>
     </div>
   );
 }
@@ -93,8 +108,8 @@ function LeaderboardPanel() {
 function XpCounter() {
   const xp = useGameStore((s) => s.xp);
   return (
-    <div className="w-fit rounded border border-white/40 bg-black/75 px-2.5 py-1.5 font-mono text-base text-white">
-      ✨ XP: {xp}
+    <div className="card-glass w-fit rounded-xl px-3 py-1.5 font-mono text-base font-semibold text-amber-300 shadow-lg">
+      ✨ XP <span className="tabular-nums text-white">{xp}</span>
     </div>
   );
 }
@@ -114,13 +129,20 @@ function DailyCounter() {
           ? "#eab308"
           : "#ef4444";
 
+  const pct = Math.min(100, Math.round((total / target) * 100));
+
   return (
-    <div
-      className="w-fit rounded border border-white/40 bg-black/75 px-2.5 py-1 font-mono text-sm"
-      style={{ color }}
-    >
-      Today: {total} / {target}
-      {total >= target ? "  ✨" : ""}
+    <div className="card-glass w-44 rounded-xl px-3 py-1.5 font-mono text-sm shadow-lg">
+      <div className="flex items-center justify-between" style={{ color }}>
+        <span>Hoy {total} / {target}</span>
+        {total >= target ? <span>✨</span> : null}
+      </div>
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
+      </div>
     </div>
   );
 }
