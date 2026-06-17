@@ -108,7 +108,7 @@ export default function DemoControls() {
           onClick={() => run(forceStealCheck)}
           className="w-full rounded-lg border border-orange-500/50 bg-orange-500/15 px-3 py-4 text-sm font-semibold text-orange-300 transition active:scale-95 disabled:opacity-40"
         >
-          😈 Abrir leads sin trabajar para robo
+          ⚠️ Abrir leads sin trabajar para robo
         </button>
         <p className="mt-1.5 text-xs text-white/35">
           Salta la espera de 20 min: todo lead claimed sin comunicación queda

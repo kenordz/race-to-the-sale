@@ -163,7 +163,7 @@ function handleLeadUpdate(
               durationMs: STEAL_TOAST_DURATION_MS,
             }
           : {
-              message: `😈 STEAL OPPORTUNITY — unworked ${formatSourceLabel(lead.source)} lead on the board!`,
+              message: `⚠️ STEAL OPPORTUNITY — unworked ${formatSourceLabel(lead.source)} lead on the board!`,
               accent: "#f97316",
               durationMs: STEAL_TOAST_DURATION_MS,
             }

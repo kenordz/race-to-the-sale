@@ -12,8 +12,8 @@ import { NpcCrowd } from "@/lib/game/npc";
 
 const MAP_WIDTH = 1376;
 const MAP_HEIGHT = 768;
-const ZOOM = 2;
-const PLAYER_SCALE = 1.25;
+const ZOOM = 2.3;
+const PLAYER_SCALE = 1.85;
 const PLAYER_SPEED = 150;
 
 // Reuse the LimeZu character sheet layout (32x64 frames, 56 cols).

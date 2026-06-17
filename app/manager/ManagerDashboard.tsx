@@ -35,7 +35,7 @@ const FUNNEL_ORDER = [
 const FUNNEL_LABELS: Record<string, string> = {
   new: "Nuevos",
   claimed: "Claimed",
-  stealable: "😈 Robables",
+  stealable: "⚠️ Robables",
   contacted: "Contactados",
   appointment_set: "📅 Citas",
   sold: "🚗 Vendidos",
@@ -218,7 +218,7 @@ export default function ManagerDashboard() {
                 <th className="px-3 py-2.5 text-right">Emails</th>
                 <th className="px-3 py-2.5 text-right">📅 Citas</th>
                 <th className="px-3 py-2.5 text-right">🚗 Ventas</th>
-                <th className="px-3 py-2.5 text-right">😈 Robos</th>
+                <th className="px-3 py-2.5 text-right">⚠️ Robos</th>
                 <th className="px-3 py-2.5 text-right">💀 Perdidos</th>
                 <th className="px-3 py-2.5 text-right">Avg respuesta</th>
                 <th className="px-3 py-2.5 text-right">XP</th>

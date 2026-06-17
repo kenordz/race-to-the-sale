@@ -41,7 +41,7 @@ const CLAIM_STYLES: Partial<Record<EventType, { label: string; accent: string }>
   lead_claimed_ontime: { label: "✓ On-Time", accent: "#22c55e" },
   lead_claimed_late: { label: "Caught Late", accent: "#3b82f6" },
   lead_claimed_stale: { label: "Stale Lead", accent: "#9ca3af" },
-  lead_stolen: { label: "😈 LEAD STOLEN!", accent: "#f97316" },
+  lead_stolen: { label: "⚠️ LEAD STOLEN!", accent: "#f97316" },
 };
 const CLAIM_TOAST_DURATION_MS = 2500;
 const NONE_TOAST_DURATION_MS = 1500;
@@ -108,6 +108,7 @@ export class MainScene extends Phaser.Scene {
   private leadHud!: Phaser.GameObjects.Container;
   private leadHudHeader!: Phaser.GameObjects.Text;
   private leadHudLines = new Map<string, Phaser.GameObjects.Text>();
+  private leadHudOverflow?: Phaser.GameObjects.Text;
   private leadHudLastRefresh = 0;
   private unsubscribeStore: (() => void) | null = null;
 
@@ -323,14 +324,64 @@ export class MainScene extends Phaser.Scene {
 
     const headerParts = [`Leads pendientes: ${pendingLeads.size}`];
     if (stealableLeads.size > 0) {
-      headerParts.push(`😈 ${stealableLeads.size} para robar`);
+      headerParts.push(`⚠️ ${stealableLeads.size} en riesgo`);
     }
     this.leadHudHeader.setText(headerParts.join("   "));
 
-    // Drop any line whose lead left both live collections (claimed, stolen,
-    // or saved — the store mirrors Realtime either way).
+    const now = Date.now();
+    // Cap how many lines render so a flooded board never overflows the view;
+    // the rest collapse into a single "+N más" summary line.
+    const MAX_VISIBLE = 6;
+
+    // Build a prioritized render list: urgent pending first (oldest first,
+    // closest to ungrabbed), then stealable.
+    const sortedPending = [...pendingLeads.values()].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    const sortedStealable = [...stealableLeads.values()].sort(
+      (a, b) =>
+        new Date(a.claimed_at ?? a.created_at).getTime() -
+        new Date(b.claimed_at ?? b.created_at).getTime()
+    );
+
+    type Row = { id: string; color: string; body: string };
+    const rows: Row[] = [];
+
+    for (const lead of sortedPending) {
+      const createdAt = new Date(lead.created_at).getTime();
+      const msLeft = createdAt + LEAD_CLAIM_WINDOW_MS - now;
+      let color: string;
+      let body: string;
+      if (msLeft <= 0) {
+        color = "#9ca3af"; // gray
+        body = `${formatSourceLabel(lead.source)} — UNGRABBED`;
+      } else {
+        const mins = Math.floor(msLeft / 60_000);
+        const secs = Math.floor((msLeft % 60_000) / 1000);
+        const stamp = `${mins}:${secs.toString().padStart(2, "0")}`;
+        if (msLeft < 60_000) color = "#ef4444"; // red
+        else if (msLeft < 180_000) color = "#eab308"; // yellow
+        else color = "#22c55e"; // green
+        body = `${formatSourceLabel(lead.source)}  ${stamp}`;
+      }
+      rows.push({ id: lead.id, color, body });
+    }
+    for (const lead of sortedStealable) {
+      rows.push({
+        id: lead.id,
+        color: "#f97316",
+        body: `⚠️ ROBABLE: ${formatSourceLabel(lead.source)}`,
+      });
+    }
+
+    const visible = rows.slice(0, MAX_VISIBLE);
+    const visibleIds = new Set(visible.map((r) => r.id));
+
+    // Drop any line whose lead is no longer visible (claimed/stolen/saved, or
+    // pushed past the cap by more urgent leads).
     for (const [id, lineText] of this.leadHudLines) {
-      if (!pendingLeads.has(id) && !stealableLeads.has(id)) {
+      if (!visibleIds.has(id)) {
         lineText.destroy();
         this.leadHudLines.delete(id);
       }
@@ -354,55 +405,33 @@ export class MainScene extends Phaser.Scene {
       return line;
     };
 
-    const now = Date.now();
     let y = 4;
-
-    // Pending leads first, oldest first so the most urgent (closest to
-    // ungrabbed) sits at the top of the list.
-    const sortedPending = [...pendingLeads.values()].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-    for (const lead of sortedPending) {
-      const line = ensureLine(lead.id);
-
-      const createdAt = new Date(lead.created_at).getTime();
-      const msLeft = createdAt + LEAD_CLAIM_WINDOW_MS - now;
-
-      let color: string;
-      let body: string;
-      if (msLeft <= 0) {
-        color = "#9ca3af"; // gray
-        body = `${formatSourceLabel(lead.source)} — UNGRABBED`;
-      } else {
-        const mins = Math.floor(msLeft / 60_000);
-        const secs = Math.floor((msLeft % 60_000) / 1000);
-        const stamp = `${mins}:${secs.toString().padStart(2, "0")}`;
-        if (msLeft < 60_000) color = "#ef4444"; // red
-        else if (msLeft < 180_000) color = "#eab308"; // yellow
-        else color = "#22c55e"; // green
-        body = `${formatSourceLabel(lead.source)}  ${stamp}`;
-      }
-
-      line.setColor(color);
-      line.setText(body);
+    for (const row of visible) {
+      const line = ensureLine(row.id);
+      line.setColor(row.color);
+      line.setText(row.body);
       line.setY(y);
       y += 14;
     }
 
-    // Stealable leads below, oldest claim first (most steal-urgent). Orange
-    // — the same accent as the steal pulse/toasts.
-    const sortedStealable = [...stealableLeads.values()].sort(
-      (a, b) =>
-        new Date(a.claimed_at ?? a.created_at).getTime() -
-        new Date(b.claimed_at ?? b.created_at).getTime()
-    );
-    for (const lead of sortedStealable) {
-      const line = ensureLine(lead.id);
-      line.setColor("#f97316");
-      line.setText(`😈 STEAL: ${formatSourceLabel(lead.source)}`);
-      line.setY(y);
-      y += 14;
+    // Overflow summary line for everything past the cap.
+    if (!this.leadHudOverflow) {
+      this.leadHudOverflow = this.add
+        .text(0, 0, "", {
+          fontSize: "10px",
+          fontFamily: "monospace",
+          color: "#cbd5e1",
+          backgroundColor: "#000000cc",
+          padding: { x: 6, y: 2 },
+        })
+        .setOrigin(0.5, 0);
+      this.leadHud.add(this.leadHudOverflow);
+    }
+    const overflow = rows.length - visible.length;
+    if (overflow > 0) {
+      this.leadHudOverflow.setText(`+${overflow} más…`).setY(y).setVisible(true);
+    } else {
+      this.leadHudOverflow.setVisible(false);
     }
   }
 

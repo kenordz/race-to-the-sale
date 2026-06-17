@@ -68,7 +68,7 @@ export async function forceStealCheck(): Promise<DemoActionResult> {
       detail:
         count === 0
           ? "No hay claims sin trabajar — nada que abrir"
-          : `${count} lead(s) abiertos para robo 😈`,
+          : `${count} lead(s) abiertos para robo ⚠️`,
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
